@@ -253,15 +253,15 @@ To swap the destination later, change the single Compose action `Compose Library
 2. **The 5,000-item list view threshold applies to the whole library**, not to your folder. Nested folders keep per-folder views fine, but any *flat* view or filter across the library needs indexed columns, and the three-year window makes this a certainty rather than a risk. See the volume table below.
 3. Versioning settings are library-wide, so turning on the 500-version limit affects all of Documents.
 
-**What three-year retention means in numbers.** At ~10,400 files a year, the report tree reaches a steady state of roughly **31,200 files**, plus whatever else already lives in Documents. The backfill to the start of the retail year (section 8.2) front-loads roughly 6,500 of those on day one.
+**What three-year retention means in numbers.** At ~10,400 files a year, the report tree reaches a steady state of roughly **31,200 files**, plus whatever else already lives in Documents. The backfill (section 8.2) contributes 1,001 of those on day one.
 
 | Milestone | Item count | Reached at roughly | Consequence |
 | --- | --- | --- | --- |
-| List view threshold | 5,000 | **during the backfill itself** | Unindexed flat views and OData filters start failing |
-| Index-creation lockout | 20,000 | **month 16** | **An index can no longer be added by hand** |
+| List view threshold | 5,000 | **month 5** | Unindexed flat views and OData filters start failing |
+| Index-creation lockout | 20,000 | **month 22** | **An index can no longer be added by hand** |
 | Steady state | ~31,200 | year 3 | Holds flat from here |
 
-Both of the first two rows moved earlier once the backfill window grew to a full retail year. The library now crosses the view threshold before go-live is even finished, so section 2.3 is not a future concern.
+The second row is the one with a deadline attached, and section 2.3 acts on it.
 
 **My recommendation:** go with your path as given. The reporting library is more discoverable where the sales team already works, retention is now confirmed compatible, and the view threshold is handled by indexing on day one.
 
@@ -306,9 +306,9 @@ Create these on the Documents library (**Settings > Create column**), or on a de
 
 **Indexing is not optional, and it has a deadline.** Once the library passes 5,000 items, any view or OData filter on a non-indexed column is refused outright by SharePoint. Worse, **adding an index by hand is blocked above 20,000 items**, and the modern experience only auto-indexes below that figure.
 
-With three-year retention and a full-retail-year backfill, this library crosses **5,000 items during the backfill itself** and reaches **20,000 in roughly 16 months**, sooner once existing Documents content is counted. After that the indexes in the table above cannot be created through the UI at all, and the weekly control report in section 9 (which filters on `WeekEnding`) stops working with no way to fix it short of a support path or restructuring the library.
+With three-year retention this library passes 5,000 items around **month 5** and reaches **20,000 in roughly 22 months**, both sooner once existing Documents content is counted. After 20,000 the indexes in the table above cannot be created through the UI at all, and the weekly control report in section 9 (which filters on `WeekEnding`) stops working with no way to fix it short of a support path or restructuring the library.
 
-**Create all five indexes before the first backfill chunk runs.** It costs five minutes on an empty library and cannot be undone cheaply later. This is the single highest-consequence five minutes in the whole build, and the backfill is what makes it urgent rather than eventual.
+**Create all five indexes before the first backfill chunk runs.** It costs five minutes on an empty library and cannot be undone cheaply later. This is the single highest-consequence five minutes in the whole build.
 
 **On `FiscalWeek`.** Confirmed rule, and it is now built rather than deferred:
 
@@ -1183,21 +1183,21 @@ Leave `Get file metadata using path Existing File` on the **default** retry poli
 
 ## 8. Step 7: Backfill and test harness
 
-The spec's instruction here is the right one and worth restating: **build the backfill as a manually triggered flow that shares the parse logic, not as a one-off script.** Two implementations of the same parser will drift, and the day they drift is the day the library stops being trustworthy.
+The backfill is the parser's acceptance test as much as it is a data-loading job. The spec is right that it should share the production parse logic rather than be a separate script, because two implementations drift and the day they drift is the day the library stops being trustworthy.
 
-### 8.1 Structure: the one question that decides it
+### 8.1 Structure: decided
 
-The spec warns that two implementations of the same parser will drift, and it is right. But drift needs two *live* copies. So the decision reduces to a single operational question:
+Drift needs two *live* copies, so the structural decision reduced to one operational question:
 
 > **After go-live, will anything other than the email trigger need to run the parser on an ongoing basis?**
 
-**Answered: no.** Nothing beyond the email trigger will run the parser on an ongoing basis.
+**Answered: no.**
 
-**So: export a copy, run the backfill, delete the copy.** There is then no second implementation to drift, because it stops existing. If another backfill is ever needed, export a fresh copy from the then-current production flow. That is zero-drift by construction and costs nothing to build. Section 8.1.2 records the child-flow alternative in case the answer ever changes.
+**So: export a copy of the production flow, swap the trigger, run the backfill, delete the copy.** There is then no second implementation to drift, because it stops existing. If another backfill is ever needed, export a fresh copy from the then-current production flow. That is zero-drift by construction and costs nothing to build. Section 8.1.2 records the child-flow alternative in case the answer ever changes.
 
-### 8.1.1 Why "no" is the likely answer here, and how to check
+### 8.1.1 What covers re-filing instead
 
-The scenario that would justify keeping a permanent second copy is re-filing: a report lands in `_Unclassified`, someone adds the missing mapping row, and now the original message needs re-processing. That sounds like a recurring backfill. It is not, because of two properties this design already has:
+The scenario that would otherwise justify keeping a permanent second copy is re-filing: a report lands in `_Unclassified`, someone adds the missing mapping row, and now the original message needs re-processing. That sounds like a recurring backfill. It is not, because of two properties this design already has:
 
 - **The mapping list is read at run time.** Adding a retailer changes behaviour with no flow edit at all, so the flow definition is byte-identical before and after the fix.
 - **Power Automate keeps 28 days of run history**, and a run can be resubmitted from it. Resubmitting replays the original trigger payload through the current flow, which now reads the corrected mapping list.
@@ -1208,9 +1208,9 @@ Two limits worth knowing before you rely on it. Resubmission is capped at **20 r
 
 The case that genuinely needs a backfill is re-parsing mail **older than 28 days**: a parser bug found late, or a retailer added retroactively. That is real but rare, and an export made at that moment is exactly as correct as a permanent child flow would have been. Note also that re-parsing old mail only *adds* the file in the right place; it does not remove the wrongly-filed copy, so a late fix needs manual cleanup either way.
 
-### 8.1.2 What the child flow actually costs
+### 8.1.2 The child flow, recorded in case the answer ever changes
 
-If the answer is yes, this is the structure:
+If something else ever does need to call the parser on an ongoing basis, an on-demand re-file button or a Power Apps front end, this is the structure:
 
 1. **`SPS Analytics - Parse and File (child)`**: the logic from 6.3 to 6.10, with a **Manually trigger a flow** trigger taking Subject, From, DateTimeReceived, InternetMessageId, MessageId and the attachments array as inputs.
 2. **`SPS Analytics - File Reports to SharePoint`**: the production flow. Trigger, then **Run a Child Flow**.
@@ -1222,37 +1222,24 @@ Three constraints that are easy to discover too late:
 - **Child flows only support embedded connections.** Anything beyond built-in actions and Dataverse, which here means both Office 365 Outlook and SharePoint, must be switched to **Use this connection** rather than **Provided by run-only user**, on the child flow's Run only users tile. Connections cannot be passed from parent to child. In practice that hard-binds the child to `svc-sps-filing@swimusa.com`, which is the intended identity anyway.
 - **Run history splits in two.** A parse failure shows as a generic failure on the parent plus a separate child run to go and find. That is real friction for anyone who is not already comfortable in Power Automate, and it works against the "make failures legible" goal the rest of this design aims at.
 
-**Recommendation: exported copy, deleted after go-live.** This revises the earlier draft of this guide, which suggested the child flow. Three things changed the balance: the mapping list being read at run time means retailer changes need no flow edit, resubmit covers the 28-day remediation window for free, and the child-flow path turns out to be a day-one architectural commitment rather than a refactor you can defer.
+An earlier draft of this guide recommended the child flow. Three things changed the balance: the mapping list being read at run time means retailer changes need no flow edit, resubmit covers the 28-day remediation window for free, and the child-flow path turns out to be a day-one architectural commitment rather than a refactor that can be deferred. Because it cannot be retrofitted safely, revisiting this means rebuilding both flows in a fresh solution.
 
-Whichever you choose, if a second copy does live alongside production, write **"any parser change must be applied to both flows"** at the top of both flow descriptions.
+If a second copy ever does live alongside production, write **"any parser change must be applied to both flows"** at the top of both flow descriptions.
 
-### 8.2 The backfill window, and a gap to confirm before you build anything
+### 8.2 The backfill window
 
-**Target: back to the first week of the current retail year.** FY2026 week 1 begins **Sunday 2026-02-01**, so the window is `2026-02-01` through today.
-
-That is a much larger job than the audit describes, and there is a discrepancy to resolve first.
+**Confirmed: the mailbox was created on 2026-08-11**, so the window is `2026-08-11` through today and there is nothing older to find.
 
 | | |
 | --- | --- |
-| Requested window | 2026-02-01 to 2026-09-14, **226 days, 32.3 weeks**, fiscal weeks **W01 to W32** |
-| Observed rate | ~200 messages/week |
-| **Estimated messages in the window** | **~6,500** |
-| Of those, confirmed to exist by the audit | **1,001** (2026-08-11 onward, roughly W28 to W32) |
-| **Not covered by the audit** | **~5,500** (2026-02-01 to 2026-08-10, W01 to W27) |
+| Window | 2026-08-11 to 2026-09-14, **35 days, 5.0 weeks** |
+| Fiscal weeks | **FY2026 W28 to W32** |
+| Messages | **1,001**, the full Inbox |
+| Rate | ~200 messages/week |
 
-> **The audit says the Inbox holds 1,001 messages dated 2026-08-11 through 2026-09-14, and nothing older.** If that is the whole Inbox, then roughly 27 of the 32 requested weeks are not there to file. The spec is explicit: "Messages in Inbox at analysis time: 1,001. Date range: 2026-08-11 through 2026-09-14."
+**The library's history therefore begins at FY2026 week 28.** This is a permanent property of the archive, not a gap to be closed later, and it is worth recording somewhere a business user will find it. Put a short `_README.txt` in `/02 - Sales/05 - Published Reports/` saying so, or someone will eventually spend an afternoon hunting for February.
 
-**Resolve this before building the backfill flow.** Three possibilities, with different outcomes:
-
-| Possibility | How to confirm | Consequence |
-| --- | --- | --- |
-| Older mail was never there (mailbox created ~2026-08-11) | Check the mailbox creation date in Exchange admin center | The library starts at W28. W01 to W27 can only come from SPS re-sending, which is worth asking for. |
-| Older mail exists but sits **outside the Inbox** (Archive, a subfolder, the online archive) | Open the shared mailbox in Outlook and look for other folders with volume | Backfill must target those folders too. `Get emails (V3)` takes a **Folder** parameter; run one pass per folder. |
-| Older mail was deleted or aged out by a retention policy | Check Exchange retention policy on the mailbox; check Recoverable Items | Recovery may be possible, or not. Ask SPS to re-send. |
-
-**The one-minute check:** open `sps-analytics@swimusa.com` in Outlook, sort the Inbox by Received ascending, and read the date on the oldest message. If it is 2026-08-11, the mail is not in the Inbox and the other two rows are where to look next.
-
-I have written the rest of this section for the full ~6,500-message window. If the answer is that only 1,001 exist, everything below still applies, it just finishes in one afternoon instead of a week.
+Going back to FY2026 week 1 would mean asking SPS to re-send W01 to W27. That has been considered and declined; note it here only so the decision is on the record rather than rediscovered.
 
 ### 8.3 The backfill reader
 
@@ -1264,67 +1251,69 @@ I have written the rest of this section for the full ~6,500-message window. If t
 | Folder | `Inbox` (repeat per folder if 8.2 finds mail elsewhere) |
 | Include Attachments | **Yes** |
 | Top | `1000` (the maximum) |
-| Search Query | `received:2026-02-01..2026-02-28` (one chunk; see below) |
+| Search Query | `received:2026-08-11..2026-08-31` (chunk 1 of 2; see below) |
 
 Settings: **Pagination On**, Threshold `5000`.
 
-**Chunk by month, oldest first.** At ~200 messages a week, a calendar month is ~870 messages, comfortably inside the `Top` cap of 1,000 with room for a heavy month. Eight chunks cover February to September. Do not try to take the window in one call.
+**Two chunks, oldest first: August then September.** This is not optional tidiness. `Top` caps at **1,000** and the Inbox holds **1,001** messages, so a single pass silently drops one. Splitting at the month boundary puts roughly 600 in the first chunk and 400 in the second, both comfortably inside the cap.
 
 Three documented gotchas, each of which will cost you a morning if you hit it blind:
 
 - **The To / From / Subject Filter fields only examine the first 250 messages** in the folder, so they return silently incomplete results at this volume. Use **Search Query**, which searches the whole folder.
 - **`Top` is capped at 1,000**, which is why the window is chunked rather than paged in one pass.
-- **Run history is 28 days.** A backfill spread over a week is fine, but if you need to audit what the backfill did, capture the run outputs as you go rather than relying on history being there next month.
+- **Run history is 28 days.** If you want a record of what the backfill did, capture the run outputs as you go rather than relying on history being there next month.
 
 Process oldest first, and put a **Delay** of 2 seconds inside the loop.
 
-**Budget the request cost before you start, not halfway through:**
+**Budget the request cost before you start:**
 
 | | |
 | --- | --- |
-| ~6,500 messages at ~30 actions each | **~194,000 Power Platform requests** |
-| Days of full budget on M365 seeded (6,000/day) | **32 days** |
-| Days of full budget on Power Automate Premium (40,000/day) | **~5 days** |
+| 1,001 messages at ~30 actions each | **~30,000 Power Platform requests** |
+| Days of full budget on M365 seeded (6,000/day) | **5 days** |
+| Days of full budget on Power Automate Premium (40,000/day) | **under 1 day** |
 
-This makes the Premium licence from section 3.2 a **prerequisite rather than a recommendation**. Even on Premium, plan roughly one month-chunk per day across a working week, and keep in mind that the production trigger is consuming the same budget from the same owner.
+This is the clearest practical argument for the Premium licence in section 3.2: with it the backfill is an afternoon, without it the same work has to be rationed across a working week. Either way, remember the production trigger draws on the same owner's budget at the same time.
 
-### 8.4 Sequence: enable the trigger first, then backfill
+### 8.4 Sequence: mind the gap between backfill and trigger
 
-This reverses the usual advice, and the reason is the size of the window.
+The trigger does not retroactively collect mail that arrived while it was off. It starts from the moment you enable it. So "backfill, then enable" opens a gap exactly as wide as the backfill takes, and mail arriving in that gap is filed by neither.
 
-A backfill spanning several days leaves several days during which new SPS mail arrives. The trigger does not retroactively collect mail that arrived while it was off: it starts from the moment you enable it. So "backfill, then enable" opens a gap exactly the width of the backfill, and the mail in that gap is filed by neither.
+At 1,001 messages the backfill is an afternoon on a Premium licence, so the gap is hours rather than days, and SPS delivers in Sunday-to-Tuesday bursts. Run it on a Thursday and the gap may well contain nothing at all. It is still free to avoid.
 
-**Correct order:**
+**Recommended order:**
 
 1. Validate the parser against `_Test` (section 10).
 2. Point `Compose Library Root` at the production path.
 3. **Enable the production trigger.** From this moment nothing new is missed.
-4. Run the backfill in month chunks, oldest first.
+4. Run the backfill, August chunk then September.
 5. Reconcile counts (8.5) and run the folder check (8.6).
 
-The overlap between the last backfill chunk and live traffic is safe by design: the `SourceMessageId` guard skips anything already filed, and the week-anchored filename means a message caught by both resolves to the same target. That guard is doing real work here, not just guarding against replays.
+The overlap between the September chunk and live traffic is safe by design: the `SourceMessageId` guard skips anything already filed, and the week-anchored filename means a message caught by both resolves to the same target. That guard is doing real work here, not just catching replays.
+
+**If you would rather see the backfill verified before anything goes live**, that is a legitimate preference at this size. Run the backfill first, then immediately before enabling the trigger, run one more small chunk covering the hours the backfill itself took. Just do not skip that last chunk, because it is the whole gap.
 
 ### 8.5 Expected outcome, and the pass/fail line
 
-Scaling the audit's observed ratios (997 reports, 4 admin messages, a handful unclassified per 1,001) across the window:
+The audit read all 1,001 messages, so this is a known quantity rather than an estimate:
 
-| Destination | Expected, if ~6,500 messages exist | Expected, if only the audited 1,001 exist |
-| --- | --- | --- |
-| `2026/` (routed reports) | ~6,470 | **997** |
-| `_Admin/2026/` | ~25 | **4** (two SPS account notices, one Retail Intelligence newsletter, one Retailer Data Availability Report) |
-| `_Unclassified/` | Only `3. SALES - DOOR PERFORMANCE` instances | Same |
+| Destination | Expected count |
+| --- | --- |
+| `2026/` (routed reports) | **997** |
+| `_Admin/2026/` | **4** (two SPS account notices, one Retail Intelligence newsletter, one Retailer Data Availability Report) |
+| `_Unclassified/` | Only the `3. SALES - DOOR PERFORMANCE` instances |
 
-**The pass/fail line: run the first month chunk, then stop and look.** If more than a handful of that chunk landed in `_Unclassified`, fix the mapping list before running the remaining seven. The backfill is the parser's test harness, and testing it one chunk at a time is what turns a bad parse into a twenty-minute problem instead of a six-thousand-file problem.
+**The pass/fail line: run the August chunk, then stop and look.** If more than a handful of it landed in `_Unclassified`, fix the mapping list before running September. Checking between the two chunks turns a bad parse into a twenty-minute problem.
 
-Older mail is also where the parser is most likely to be surprised: the audit only ever saw five weeks of subject lines, and SPS may have changed formats earlier in the year. Treat W01 to W27 as unverified input.
+These three numbers are the parser's acceptance test. The audit covered exactly this mail, so any material deviation from 997 / 4 / a handful means the flow is not doing what the spec's own analysis says it should, and that is worth understanding before the library is trusted.
 
 ### 8.6 The check the backfill gives you for free
 
 After the backfill, run this against the library. It is the direct proof of the 53-file requirement:
 
-> Group the **By Week** view by folder, and sort descending by item count. **No leaf folder should hold more files than the number of weeks you backfilled.**
+> Group the **By Week** view by folder, and sort descending by item count. **No leaf folder should hold more than 5 files.**
 
-One file per folder per reporting week is the whole design. After a 32-week backfill no leaf folder should exceed 32; after a 5-week backfill, 5. Any folder over that means two messages in one reporting week resolved to different filenames, which is either a resend the week-anchor failed to collapse or a parse producing two different brands for the same series. Both are worth chasing before the library is trusted, and both are invisible unless you look at it this way.
+The window is five reporting weeks (W28 to W32) and the design allows one file per folder per week, so five is the ceiling. Any folder holding six or more means two messages in one reporting week resolved to different filenames, which is either a resend the week-anchor failed to collapse or a parse producing two different brands for the same series. Both are worth chasing before the library is trusted, and both are invisible unless you look at it this way.
 
 ---
 
@@ -1404,13 +1393,13 @@ Note that the trigger goes on **before** the backfill, not after. Section 8.4 ex
 
 1. Parser trace table (10.2) verified on paper.
 2. Behaviour tests T1 to T13 pass against `_Test`.
-3. Backfill window confirmed against section 8.2, including **where the pre-August mail actually lives**.
-4. All five indexed columns created (section 2.3). Before any file is written.
-5. `Compose Library Root` switched to the production path.
-6. **Trigger enabled.** Nothing new is missed from this point.
-7. Backfill chunk 1 (February) run, then **stop and inspect** against section 8.5.
-8. Remaining chunks run, oldest first, roughly one per day.
-9. Counts reconciled (8.5) and leaf-folder check passed (8.6).
+3. All five indexed columns created (section 2.3). Before any file is written.
+4. `Compose Library Root` switched to the production path.
+5. **Trigger enabled.** Nothing new is missed from this point.
+6. Backfill August chunk run, then **stop and inspect** against section 8.5.
+7. September chunk run.
+8. Counts reconciled against 997 / 4 / a handful (8.5), leaf-folder check passed (8.6).
+9. `_README.txt` added to the report root noting that history begins 2026-08-11 (section 8.2).
 10. First Monday control report reviewed by a human before anyone relies on the library.
 
 ---
@@ -1530,17 +1519,12 @@ This is the procedure for someone on your team, and it requires no Power Automat
 | 7 | Alert destinations | SPS Report Hub chat and `sps-hub-alerts@swimusa.com`; service account already in the chat | 3.5, 7.4, 9 |
 | 8 | Non-sortable date rewriting | Leave disabled. Zero of 1,001 attachments carry a date | 6.9 |
 | 9 | Year in the folder path | **Calendar year**, with `FiscalYear` and `FiscalWeek` as columns | 1.1, 2.3, 2.4 |
-| 10 | Backfill window | Back to **FY2026 week 1, 2026-02-01**. ~32 weeks, ~6,500 messages | 8.2 to 8.6 |
+| 10 | Backfill window | **2026-08-11 to today**, the whole Inbox. 5 weeks, 1,001 messages, FY2026 W28 to W32 | 8.2 to 8.6 |
+| 11 | Pre-August history | Mailbox was created 2026-08-11, so none exists. Library history begins at **FY2026 W28**; SPS re-send considered and declined | 8.2 |
 
 ### 14.2 Still open
 
-One item, and it is a question of fact rather than a design choice.
-
-| # | Open question | Why it matters | Next step |
-| --- | --- | --- | --- |
-| 11 | **Does the pre-August mail actually exist?** | The audit found 1,001 messages in the Inbox spanning only 2026-08-11 onward. The requested backfill window starts 2026-02-01, so roughly **27 of the 32 weeks have no evidence of being there**. | The one-minute check in section 8.2: open the mailbox, sort the Inbox by Received ascending, read the oldest date. Then follow whichever of the three rows in that table applies. |
-
-If the older mail turns out to be missing rather than merely elsewhere, there is a follow-on decision: whether to ask SPS to re-send W01 to W27. That is worth raising in the same conversation as the four vendor defects in section 12.
+**Nothing.** Every design decision is settled. What remains is the verification list below and the build itself.
 
 ### 14.3 Verify before go-live
 
@@ -1550,8 +1534,7 @@ These are not decisions, they are checks that something confirmed is actually in
 | --- | --- |
 | `svc-sps-filing@swimusa.com` holds a **Power Automate Premium** licence | Without it the account is capped at 6,000 requests per 24 hours against a ~3,000 peak-day estimate. Section 3.2. |
 | Full Access on `sps-analytics@swimusa.com` granted to that account, **at least two hours before** you build the trigger | Permission replication lag. Section 3.1. |
-| All five indexed columns created **before the first backfill chunk** | Indexes cannot be added by hand above 20,000 items. With the full-year backfill the library crosses 5,000 during the backfill itself and 20,000 at ~16 months. Section 2.3. |
-| Where the pre-August mail lives, per section 8.2 | Decides whether the backfill is ~6,500 messages or ~1,001, and whether it needs to read folders other than the Inbox. |
+| All five indexed columns created **before the first backfill chunk** | Indexes cannot be added by hand above 20,000 items, which this library reaches at roughly month 22. Section 2.3. |
 | Nobody has lowered the environment's 28-day run history retention | The re-filing loop in 8.1.1 depends on resubmit being available for 28 days. |
 
 ---
