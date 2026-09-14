@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push supersedes an in-flight run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Match the Azure Functions runtime. Testing on a different minor
+          # version tests something we do not deploy.
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev,function]"
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Azure-facing modules import cleanly
+        # The parser tests never touch these, so without this step a syntax or
+        # import error in the Graph client or the triggers would reach a deploy.
+        run: python -c "import sps_filing.config, sps_filing.graph, sps_filing.filer, function_app"
+
+      - name: Mapping seed matches its generator
+        # data/sps_filing_map_seed.csv is both the SharePoint import file and
+        # the test fixture. Hand-editing it would silently drift the two apart,
+        # most likely by breaking the length-derived priorities that make
+        # SHAPE SOLVER SPORT outrank SHAPE SOLVER.
+        run: |
+          python tools/generate_mapping_seed.py
+          git diff --exit-code data/sps_filing_map_seed.csv

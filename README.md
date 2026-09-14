@@ -1,5 +1,7 @@
 # sps-hub
 
+[![CI](https://github.com/swimusa-dev/sps-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/swimusa-dev/sps-hub/actions/workflows/ci.yml)
+
 Files reports emailed to `sps-analytics@swimusa.com` into the Swim USA CompanyHub SharePoint library, organized `year / retailer / report family / brand` and named so any report is findable in seconds.
 
 ## Layout
@@ -22,6 +24,10 @@ pytest
 ```
 
 No Azure resources or tenant access are needed to run the tests.
+
+CI runs the same steps on every pull request: the test suite on Python 3.11, an
+import check over the Azure-facing modules, and a check that
+`data/sps_filing_map_seed.csv` still matches its generator.
 
 ## Docs
 

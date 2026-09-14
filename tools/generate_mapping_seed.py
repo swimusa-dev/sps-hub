@@ -157,7 +157,9 @@ def main() -> None:
     target = Path(__file__).resolve().parents[1] / "data" / "sps_filing_map_seed.csv"
     rows = build_rows()
     with target.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        # Force LF so regenerating is a no-op in git and the CI
+        # drift check compares content rather than line endings.
+        writer = csv.DictWriter(handle, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     print(f"wrote {len(rows)} rows to {target}")
