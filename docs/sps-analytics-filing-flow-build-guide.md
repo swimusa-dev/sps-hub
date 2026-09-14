@@ -4,7 +4,15 @@ Power Automate cloud flow that files every report emailed to `sps-analytics@swim
 
 **Destination:** `https://mainstreamswimsuits.sharepoint.com/sites/CompanyHub/Shared Documents/02 - Sales/05 - Published Reports`
 
-**Status:** design complete, ready to build. Every expression below is paste-ready Power Automate workflow definition language (WDL).
+> **Runtime superseded, design current.** The job now runs as an **Azure Function App** owned by IT, not as a Power Automate flow. See [`azure-function-build-guide.md`](azure-function-build-guide.md) for identity setup, deployment and operations.
+>
+> **Every design decision in this document still stands** and is implemented as written: the folder structure, filename grammar, week-ending anchor, resend rule, mapping list, routing and metadata columns are all unchanged. The parsing rules in sections 4 and 5, and the reasoning behind them in sections 1, 11 and 12, remain the reference.
+>
+> What to skip when reading for the Function implementation: the WDL expressions in section 6, the Power Automate prerequisites in section 3, and the backfill mechanics in section 8, all of which have code equivalents in `src/sps_filing/`. The one piece still built in Power Automate is the **weekly control report** in section 9.
+>
+> Two things the code does better than the flow could: the fiscal calendar in section 2.3 is computed from the NRF rule in `dates.py` rather than imported as 209 rows, and the nine-subject trace table in section 10.2 is an executable test suite in `tests/test_trace_table.py`.
+
+**Status:** design complete and implemented. The expressions below are paste-ready Power Automate workflow definition language (WDL), retained as the reference specification of the parsing rules.
 
 ---
 
