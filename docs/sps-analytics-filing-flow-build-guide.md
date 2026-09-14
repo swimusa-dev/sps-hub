@@ -29,7 +29,7 @@ So this guide is built against a single, confirmed source of truth.
 | # | Assumption | Why | If wrong |
 | --- | --- | --- | --- |
 | A1 | *(resolved)* `_1` and `_2` are the same file | Confirmed 2026-09-14 | No longer an assumption |
-| A2 | Reports cover a retail week ending **Saturday** | Every observed receipt lands Sun/Mon/Tue; NRF 4-5-4 weeks run Sun to Sat | Change one expression (section 6.3) |
+| A2 | *(confirmed)* Retail week ends **Saturday** | NRF 4-5-4 weeks run Sunday to Saturday | No longer an assumption |
 | A3 | Mailbox timezone reference is `America/New_York` | Stated in spec section 3 | Change the `convertTimeZone` argument |
 | A4 | The destination is a folder inside the existing **Documents** library, not a new library | That is what the URL you gave resolves to | See section 2.1 for the trade-off |
 | A5 | Exactly one report attachment per message, but the flow must tolerate N | Spec: "Exactly 1 in every message sampled" | Already handled, no change |
@@ -87,6 +87,32 @@ Two deviations from the spec's tree, both deliberate:
 
 - **`_Cross-Retailer` sits under the year.** The spec contradicts itself here: section 2's tree draws `_Cross-Retailer/` as a sibling of the retailers under `2026/`, but its folder rules say `_Cross-Retailer/{YYYY}/...`, which puts the year second. Year-first is consistent with every other path, so use `{YYYY}/_Cross-Retailer/{Family}/{Brand}/`.
 - **`_Admin` is year-scoped.** The spec says not year-scoped. At roughly 40 admin messages a year that folder grows slowly but forever, and there is no reason for it to be the one folder in the library that behaves differently. Use `_Admin/{YYYY}/`.
+
+**One question the confirmed fiscal calendar raises: is `{YYYY}` the calendar year or the fiscal year?**
+
+Now that the 4-5-4 rule is pinned down (section 2.3), the two no longer line up. FY2026 runs 2026-02-01 to 2027-01-30, so its last five weeks fall in calendar 2027:
+
+| Week ending | Fiscal week | Calendar-year folder | Fiscal-year folder |
+| --- | --- | --- | --- |
+| 2027-01-02 | 2026-W48 | `2027/` | `2026/` |
+| 2027-01-09 | 2026-W49 | `2027/` | `2026/` |
+| 2027-01-16 | 2026-W50 | `2027/` | `2026/` |
+| 2027-01-23 | 2026-W51 | `2027/` | `2026/` |
+| 2027-01-30 | 2026-W52 | `2027/` | `2026/` |
+
+**Recommendation: keep the calendar year in the folder path**, and let `FiscalYear` and `FiscalWeek` answer the fiscal question as columns.
+
+Three reasons. The filename already carries a calendar date, so folder and filename agree and a browsing user is never confronted with `2027-01-30_...xlsx` sitting in a folder called `2026`. It is unambiguous to everyone, including IT and anyone outside merchandising who has no reason to know when the fiscal year turns. And it is the same argument section 2.4 already makes: folders give a path to walk, views answer the cross-cutting questions, and "all of FY2026" is a cross-cutting question.
+
+The honest counter-argument: merchandising thinks in fiscal years, these are fiscal-period reports, and a fiscal year holds exactly 52 or 53 weeks by construction rather than by coincidence. If merchandising is the primary audience for the folder tree rather than for the views, fiscal-year folders are the better fit.
+
+It is a one-expression change either way. To switch, move `Filter array Fiscal Week` (section 6.9) above `Compose Folder Path` and replace `Compose Filing Year` with:
+
+```
+first(split(coalesce(first(body('Filter_array_Fiscal_Week'))?['OutputCode'], concat(formatDateTime(outputs('Compose_Week_Ending'), 'yyyy'), '-W00')), '-'))
+```
+
+Decide this **before the backfill**, not after. Changing it later means moving files between year folders and rewriting every link anyone has saved.
 
 ### 1.2 Filename date: use the week-ending Saturday, not the received date
 
@@ -223,11 +249,21 @@ To swap the destination later, change the single Compose action `Compose Library
 
 **The trade-off you are accepting (assumption A4).** The spec recommends a dedicated **SPS Analytics Reports** library rather than a folder inside Documents, so that retention and permissions scope cleanly. Your URL points at a folder inside the existing Documents library. Filing into an existing library is perfectly workable, and these are the three consequences:
 
-1. **Retention and permissions are inherited** from Documents. If Documents has a retention policy tuned for general business documents, ~10,000 SPS reports a year inherit it. Check that this is what you want.
-2. **The 5,000-item list view threshold applies to the whole library**, not to your folder. At ~10,400 files a year you cross it inside twelve months, and anything else already living in Documents counts too. Nested folders keep per-folder views fine, but any *flat* view or filter across the library needs indexed columns. Section 2.3 handles this.
+1. **Retention and permissions are inherited** from Documents, which is confirmed to retain **3 years of history**. That is compatible with this design: reports age out on a rolling three-year window, which is what you want for a weekly reporting feed. No conflict, so the library choice stands.
+2. **The 5,000-item list view threshold applies to the whole library**, not to your folder. Nested folders keep per-folder views fine, but any *flat* view or filter across the library needs indexed columns, and the three-year window makes this a certainty rather than a risk. See the volume table below.
 3. Versioning settings are library-wide, so turning on the 500-version limit affects all of Documents.
 
-**My recommendation:** go with your path as given. The reporting library is more discoverable where the sales team already works, and the two real risks (retention inheritance, view threshold) are both manageable and both addressed below. Revisit only if Documents turns out to carry a retention policy that conflicts.
+**What three-year retention means in numbers.** At ~10,400 files a year, the report tree reaches a steady state of roughly **31,200 files**, plus whatever else already lives in Documents.
+
+| Milestone | Item count | Reached at roughly | Consequence |
+| --- | --- | --- | --- |
+| List view threshold | 5,000 | **month 6** | Unindexed flat views and OData filters start failing |
+| Index-creation lockout | 20,000 | **month 23** | **An index can no longer be added by hand** |
+| Steady state | ~31,200 | year 3 | Holds flat from here |
+
+The second row is the one with a deadline attached, and section 2.3 acts on it.
+
+**My recommendation:** go with your path as given. The reporting library is more discoverable where the sales team already works, retention is now confirmed compatible, and the view threshold is handled by indexing on day one.
 
 ### 2.2 Create the root folders and turn on versioning
 
@@ -268,14 +304,28 @@ Create these on the Documents library (**Settings > Create column**), or on a de
 | `SourceAttachmentName` | Single line | No | original attachment name | **New** |
 | `ParseConflict` | Yes/No | No | subject vs attachment disagreed | **New** |
 
-**Indexing is not optional.** Once the library passes 5,000 items, any view or OData filter on a non-indexed column is refused outright by SharePoint. Add the indexes now, while the library is small: the modern experience only auto-indexes below 20,000 items, and adding an index by hand is blocked above 20,000. Doing this on day one costs five minutes; doing it in month fourteen is a support ticket.
+**Indexing is not optional, and it has a deadline.** Once the library passes 5,000 items, any view or OData filter on a non-indexed column is refused outright by SharePoint. Worse, **adding an index by hand is blocked above 20,000 items**, and the modern experience only auto-indexes below that figure.
 
-**On `FiscalWeek`.** Retail 4-5-4 week numbering needs a fiscal-year start date (the Sunday following the Saturday nearest 31 January), which is not derivable from a timestamp with a one-line expression. Two options:
+With three-year retention confirmed, this library reaches 20,000 items in roughly **23 months**, sooner once existing Documents content is counted. After that the indexes in the table above cannot be created through the UI at all, and the weekly control report in section 9 (which filters on `WeekEnding`) stops working with no way to fix it short of a support path or restructuring the library.
 
-- **(Recommended)** Add ~53 rows a year to the mapping list with `MapType = FiscalWeek`, keyed on the week-ending date, giving `FiscalYear` and `FiscalWeek`. Merchandising already maintains this calendar for the Bottoms Up plan, so it is a copy-paste, not a derivation. The flow looks it up from the array it has already loaded, at zero extra cost.
-- **(Defer)** Leave `FiscalWeek` empty for now. `WeekEnding` is a proper date column and sorts, filters and groups correctly on its own. Add fiscal week later when someone actually asks for it.
+**Create all five indexes before the first backfill run.** It costs five minutes on an empty library and cannot be undone cheaply later. This is the single highest-consequence five minutes in the whole build.
 
-Either is defensible. I would do the calendar rows, because "show me week 37 across all retailers" is exactly the question the metadata exists to answer, and it is the question folders cannot.
+**On `FiscalWeek`.** Confirmed rule, and it is now built rather than deferred:
+
+> NRF 4-5-4 weeks run **Sunday through Saturday**. The fiscal year ends on the **Saturday closest to 31 January**, and week 1 starts the following Sunday. A 53rd week falls out every five or six years.
+
+That rule is fully deterministic, so the calendar is generated rather than transcribed. **`docs/sps-fiscal-calendar-454.csv` in this repository holds 209 ready-to-import rows covering FY2025 through FY2028**, in the exact column shape of the mapping list. Import it into `SPS Filing Map` and the lookup in section 6.9 works with no further effort.
+
+| Fiscal year | Starts | Ends | Weeks |
+| --- | --- | --- | --- |
+| FY2025 | 2025-02-02 | 2026-01-31 | 52 |
+| FY2026 | 2026-02-01 | 2027-01-30 | 52 |
+| FY2027 | 2027-01-31 | 2028-01-29 | 52 |
+| FY2028 | 2028-01-30 | 2029-02-03 | **53** |
+
+The generated calendar reproduces the every-five-or-six-years pattern exactly: 53-week years land on FY2023, FY2028 and FY2034. Regenerate the CSV before FY2029 using the same rule.
+
+> **Watch this, because it looks like a bug and is not.** The spec's example `FiscalWeek` value of `2026-W37` was an **ISO** week. Under 4-5-4 the same receipt is **`2026-W32`**, five weeks earlier, because the fiscal year starts in February rather than January. Week ending 2026-09-12 is fiscal week 32, not 37. Anyone comparing the flow's output against the spec will see the gap and assume the flow is wrong; it is the spec's example that predates the 4-5-4 decision.
 
 ### 2.4 Build the business-facing views
 
@@ -286,6 +336,7 @@ Folders give the team a path to walk. Views answer the questions a path cannot. 
 | **By Week** | `WeekEnding` desc | Retailer | "What landed for week ending 9/12?" |
 | **By Brand** | `Brand` | `WeekEnding` desc | "Every Lauren report, all retailers" |
 | **By Retailer** | `Retailer` | `WeekEnding` desc | "Everything Dillards sent" |
+| **By Fiscal Week** | `FiscalWeek` desc | Retailer | "Everything for fiscal week 2026-W32" |
 | **Needs Attention** | none | `ReceivedDate` desc | Filter: `ParseConflict = Yes` |
 
 Every one of these filters or sorts on an indexed column. That is not a coincidence, it is why section 2.3 indexes what it indexes.
@@ -337,13 +388,11 @@ Every action execution counts, built-in Data Operations included, not just conne
 
 That sits inside 6,000, with roughly a 2x margin. Comfortable but not generous: a backfill run, a catch-up delivery after an SPS outage, or any second flow owned by the same account eats the margin fast. And note that background flows bill to the **owner**, regardless of whose connection the actions use, so the owner account's other automations count against the same 6,000.
 
-**Recommendation:** create a dedicated service account, `svc-sps-filing@swimusa.com`, own the flow from it, and assign it a **Power Automate Premium** licence.
+**Confirmed owner: `svc-sps-filing@swimusa.com`.** Build and own the flow from this account, not from a named user. It stops the flow breaking when a person leaves, which is a well-known way to lose an automation quietly, and it isolates this budget from anyone's other flows.
 
-- It moves you to 40,000/day, roughly 13x headroom.
-- It stops the flow from breaking when a person leaves the company. A flow owned by a departing employee is a well-known way to lose an automation quietly.
-- It isolates the budget from that person's other flows.
+**One item to verify before go-live: that the account actually holds a Power Automate Premium licence.** Owning the flow from a service account with only seeded Microsoft 365 rights still caps it at 6,000 requests per 24 hours, and the peak-day estimate above is ~3,000. That works until it does not: a backfill run, a catch-up delivery after an SPS outage, or a second flow added to the same account each eat the margin. Premium moves it to 40,000, roughly 13x headroom.
 
-If you would rather not buy the licence today, this is a legitimate deferral: build it under a named owner, and watch the Power Platform admin center capacity report (Licensing > Capacity add-ons > Download reports > "Microsoft Power Platform requests") for the first two months. Move to Premium when peak days pass ~4,000. Note that Microsoft applies higher "transition period" limits today and has said official limits apply later, so budgeting to the documented 6,000 rather than to observed behaviour is the safe read.
+If the licence is not in place on day one, that is a legitimate deferral rather than a blocker. Watch the Power Platform admin center capacity report (Licensing > Capacity add-ons > Download reports > "Microsoft Power Platform requests") for the first two months and move to Premium when peak days pass ~4,000. Note that Microsoft applies higher "transition period" limits today and has said official limits apply later, so budget to the documented 6,000 rather than to observed behaviour.
 
 Standard connectors only (Office 365 Outlook, SharePoint, Teams), so nothing here requires premium *connector* rights. The licence is purely about request volume.
 
@@ -374,7 +423,7 @@ Both are confirmed. Everything downstream in this guide points at these two.
 | **SPS Report Hub** (Teams group chat) | `19:7506e9ab0358413c9932c88c52d6cece@thread.v2` | Immediate alerts: run failures, link-only reports |
 | **sps-hub-alerts@swimusa.com** | Mail-enabled group | Weekly control report, platform notices |
 
-**One prerequisite that follows from choosing a chat rather than a channel:** the account holding the flow's **Teams connection must be a member of the SPS Report Hub chat**. The connector can only see and post to chats its signed-in account participates in. If you follow the section 3.2 recommendation and run this under `svc-sps-filing@swimusa.com`, **add that service account to the chat** before building section 7.4, or the action will fail at design time with the chat simply absent from the picker.
+**Prerequisite, already satisfied:** the account holding the flow's Teams connection must be a member of the SPS Report Hub chat, because the connector can only see and post to chats its signed-in account participates in. `svc-sps-filing@swimusa.com` **has been added to the chat**, so section 7.4 will build cleanly. If the chat is ever absent from the picker, membership is the first thing to re-check.
 
 Two operational notes on the chat, so nobody is surprised later:
 
@@ -1371,20 +1420,36 @@ This is the procedure for someone on your team, and it requires no Power Automat
 
 ---
 
-## 14. Decisions that need you
+## 14. Decisions
 
-Everything above is buildable as written. These eight depend on things I do not know about your tenant or your business, with a recommendation on each.
+### 14.1 Confirmed
+
+| # | Decision | Answer | Built into |
+| --- | --- | --- | --- |
+| 1 | Flow owner | `svc-sps-filing@swimusa.com` | 3.2, 3.5 |
+| 2 | Library | Folder inside `Documents`, as given | 2.1 |
+| 3 | Retention | **3 years**, always retained | 2.1, 2.3 |
+| 4 | Week-ending day | **Saturday.** NRF 4-5-4 weeks run Sunday to Saturday; the fiscal year ends on the Saturday closest to 31 January | 1.2, 6.3 |
+| 5 | `FiscalWeek` | Build it. Calendar generated to `docs/sps-fiscal-calendar-454.csv`, FY2025 to FY2028 | 2.3, 6.9 |
+| 7 | Alert destinations | SPS Report Hub chat and `sps-hub-alerts@swimusa.com`; service account already in the chat | 3.5, 7.4, 9 |
+| 8 | Non-sortable date rewriting | Leave disabled. Zero of 1,001 attachments carry a date | 6.9 |
+
+### 14.2 Still open
 
 | # | Decision | Options | My recommendation |
 | --- | --- | --- | --- |
-| 1 | **Flow owner and licence** | Named user on M365 (6,000 requests/day) / service account with Power Automate Premium (40,000) | **Service account + Premium.** Section 3.2 shows peak days near 3,000, so M365 works until it does not. The stronger argument is ownership: a flow owned by a person dies when they leave. |
-| 2 | **Library** | Your folder in `Documents` / a dedicated SPS Analytics Reports library | **Keep your path.** More discoverable where sales already works. Check item 3 first. |
-| 3 | **Retention on `Documents`** | Unknown to me | **Check before go-live.** ~10,000 reports a year will inherit whatever policy Documents carries. If it has a short deletion policy, reconsider item 2. |
-| 4 | **Week-ending day** | Saturday (assumed) / Sunday / other | **Confirm Saturday with merchandising.** The whole date scheme rests on it. NRF 4-5-4 weeks run Sunday to Saturday and every observed receipt is Sun/Mon/Tue, so Saturday is near-certain, but it is one expression to change and expensive to change later. |
-| 5 | **`FiscalWeek`** | 4-5-4 lookup rows now / leave blank and add later | **Add the rows.** ~53 a year, merchandising already maintains the calendar for the Bottoms Up plan, and "week 37 across all retailers" is exactly the question folders cannot answer. |
 | 6 | **Backfill parity** | Refactor into a child flow / export and import a copy | **Child flow**, if you can spare the extra half day. Two copies of a parser drift, and the spec is right to call that out. The copy is acceptable if you write the warning into both descriptions. |
-| 7 | **Alert destinations** | *(resolved)* | **SPS Report Hub** chat and `sps-hub-alerts@swimusa.com`, wired into sections 7.4 and 9. One open action: add the flow's Teams connection account to the chat (section 3.5). |
-| 8 | **Non-sortable date rewriting** | Build it now / leave disabled | **Leave disabled.** Zero of 1,001 attachments carry a date. The expression is in section 6.9 for when a sender needs it. A date parser that fires once a quarter and is never tested is a liability, and the derived date is correct. |
+| 9 | **Calendar year or fiscal year in the folder path** | `{YYYY}` = calendar year / fiscal year | **Calendar year**, with `FiscalYear` and `FiscalWeek` as columns. Raised by the confirmed 4-5-4 rule: five weeks of each fiscal year fall in the next calendar year. Full argument and the switch expression are in section 1.1. **Decide before the backfill**, because changing it later means moving files and breaking saved links. |
+
+### 14.3 Verify before go-live
+
+These are not decisions, they are checks that something confirmed is actually in place.
+
+| Check | Why it matters |
+| --- | --- |
+| `svc-sps-filing@swimusa.com` holds a **Power Automate Premium** licence | Without it the account is capped at 6,000 requests per 24 hours against a ~3,000 peak-day estimate. Section 3.2. |
+| Full Access on `sps-analytics@swimusa.com` granted to that account, **at least two hours before** you build the trigger | Permission replication lag. Section 3.1. |
+| All five indexed columns created **before the first backfill** | Indexes cannot be added by hand above 20,000 items, which this library reaches in roughly 23 months. Section 2.3. |
 
 ---
 
@@ -1433,3 +1498,11 @@ Two syntax notes that cause most paste errors:
 | Trigger concurrency guidance | [Optimize Power Automate triggers](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/optimize-power-automate-triggers) |
 | List view threshold and indexing | [Manage large lists and libraries in SharePoint](https://learn.microsoft.com/en-us/troubleshoot/sharepoint/lists-and-libraries/items-exceeds-list-view-threshold) |
 | Shared mailbox configuration | [Configure shared mailbox settings](https://learn.microsoft.com/en-us/microsoft-365/admin/email/configure-a-shared-mailbox) |
+| Teams group chat from a flow | [Send a message in Teams using Power Automate](https://learn.microsoft.com/en-us/power-automate/teams/send-a-message-in-teams) |
+
+## Appendix C: Files in this repository
+
+| File | Purpose |
+| --- | --- |
+| `docs/sps-analytics-filing-flow-build-guide.md` | This guide |
+| `docs/sps-fiscal-calendar-454.csv` | 209 NRF 4-5-4 fiscal week rows, FY2025 to FY2028, in `SPS Filing Map` column shape. Import directly; see section 2.3. |
