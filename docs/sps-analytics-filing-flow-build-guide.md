@@ -12,21 +12,23 @@ Power Automate cloud flow that files every report emailed to `sps-analytics@swim
 
 ### What I worked from
 
-| Document | Received | Role |
+| Document | Status | Role |
 | --- | --- | --- |
-| `sps-filing-flow-spec_2.md` | Yes | Primary design reference |
-| Mailbox audit findings | **Not received** | See below |
-| `sps-filing-flow-spec_1.md` | **Not received** | See below |
+| `sps-filing-flow-spec_2.md` | Received | Primary design reference |
+| `sps-filing-flow-spec_1.md` | **Same file**, confirmed 2026-09-14 | No separate content |
+| Mailbox audit findings | **Embedded in the spec** | Section 1, "Observed reality" |
 
-Only one of the three documents reached this session. The good news is that it is largely self-sufficient: section 1 of `sps-filing-flow-spec_2.md` ("Observed reality") **is** a mailbox audit, stating explicitly that it comes from "a full read of all 1,001 messages in the mailbox on 2026-09-14, covering receipts from 2026-08-11 forward." It carries the sender breakdown, volumes, subject-line patterns, attachment names, retailer list, report families, brands and calendars. So the audit content this guide needs is present, just embedded in the spec rather than standing alone.
+There is one source document, not three, and nothing to reconcile. `_1` and `_2` are the same file downloaded twice.
 
-I have treated `sps-filing-flow-spec_2.md` as both the spec and the audit, and built against it. **If `sps-filing-flow-spec_1.md` contains material that differs from `_2`, send it over and I will reconcile.** The two places this matters most are the retailer alias table and the brand list, because those are the parts a second document is most likely to extend.
+The mailbox audit is not separate either: section 1 of the spec ("Observed reality") **is** the audit. It states that it comes from "a full read of all 1,001 messages in the mailbox on 2026-09-14, covering receipts from 2026-08-11 forward," and it carries the sender breakdown, volumes, subject-line patterns, attachment names, retailer list, report families, brands and calendars. That is everything this build needs.
+
+So this guide is built against a single, confirmed source of truth.
 
 ### Assumptions I made, flagged
 
 | # | Assumption | Why | If wrong |
 | --- | --- | --- | --- |
-| A1 | `sps-filing-flow-spec_2.md` supersedes `_1` | Higher version number, and it is internally dated 2026-09-14 | Send `_1`, I will diff them |
+| A1 | *(resolved)* `_1` and `_2` are the same file | Confirmed 2026-09-14 | No longer an assumption |
 | A2 | Reports cover a retail week ending **Saturday** | Every observed receipt lands Sun/Mon/Tue; NRF 4-5-4 weeks run Sun to Sat | Change one expression (section 6.3) |
 | A3 | Mailbox timezone reference is `America/New_York` | Stated in spec section 3 | Change the `convertTimeZone` argument |
 | A4 | The destination is a folder inside the existing **Documents** library, not a new library | That is what the URL you gave resolves to | See section 2.1 for the trade-off |
@@ -362,6 +364,22 @@ You will be tempted to set trigger concurrency to 1 to avoid two runs racing to 
 - The folder race it protects against is already handled: the SharePoint action's default retry policy (4 exponential retries) absorbs a transient conflict, and both runs converge on the same folder.
 
 Leave it at the default. If you later see genuine collisions in run history, the fix is a retry policy adjustment, not concurrency.
+
+### 3.5 Alert destinations
+
+Both are confirmed. Everything downstream in this guide points at these two.
+
+| Destination | Address | Carries |
+| --- | --- | --- |
+| **SPS Report Hub** (Teams group chat) | `19:7506e9ab0358413c9932c88c52d6cece@thread.v2` | Immediate alerts: run failures, link-only reports |
+| **sps-hub-alerts@swimusa.com** | Mail-enabled group | Weekly control report, platform notices |
+
+**One prerequisite that follows from choosing a chat rather than a channel:** the account holding the flow's **Teams connection must be a member of the SPS Report Hub chat**. The connector can only see and post to chats its signed-in account participates in. If you follow the section 3.2 recommendation and run this under `svc-sps-filing@swimusa.com`, **add that service account to the chat** before building section 7.4, or the action will fail at design time with the chat simply absent from the picker.
+
+Two operational notes on the chat, so nobody is surprised later:
+
+- Teams lists only the **50 most recent named group chats** in the connector's picker. `SPS Report Hub` is named, so it will appear while it is active, but a quiet month can push it off the list. Section 7.4 therefore uses **Enter custom value** with the thread ID above, which does not depend on recency.
+- Chat membership is not managed like channel membership. There is no owner, no membership sync from a group, and no way to hand it over cleanly when someone leaves. If this alerting outlives the build phase, moving it to a proper Teams channel is worth doing. It is a one-field change in section 7.4.
 
 ---
 
@@ -1085,10 +1103,12 @@ Build this folder path from `utcNow()` rather than from `Compose Week Ending`, b
 
 | Field | Value |
 | --- | --- |
-| Post as | Flow bot |
-| Post in | Channel |
-| Team / Channel | your ops channel (section 10.1) |
+| Post as | **Flow bot** |
+| Post in | **Group chat** |
+| Group chat | Scroll to the bottom of the dropdown, choose **Enter custom value**, and paste `19:7506e9ab0358413c9932c88c52d6cece@thread.v2` |
 | Message | *(below)* |
+
+Use the custom value rather than picking `SPS Report Hub` from the list. The picker shows only the 50 most recent named group chats, so a selection made today can silently stop resolving after a quiet stretch; the thread ID always resolves. See section 3.5 for the membership prerequisite.
 
 ```
 concat('**SPS filing flow failed**', '<br>Subject: ', coalesce(triggerOutputs()?['body/Subject'], '(none)'), '<br>From: ', coalesce(triggerOutputs()?['body/From'], '(none)'), '<br>Received: ', coalesce(triggerOutputs()?['body/DateTimeReceived'], '(none)'), '<br>', outputs('Compose_Error_Summary'), '<br>[Open run](', outputs('Compose_Run_Link'), ')')
@@ -1181,7 +1201,7 @@ A second, scheduled flow. The spec is right that this is what makes the whole th
 | Action 1 | SharePoint **Get files (properties only)**, Library `Documents`, Filter Query `WeekEnding eq '@{formatDateTime(addDays(utcNow(), -2), ''yyyy-MM-dd'')}'` |
 | Action 2 | SharePoint **Get files (properties only)**, Limit Entries to Folder `/02 - Sales/05 - Published Reports/_Unclassified`, Include Nested Items **Yes** |
 | Action 3 | **Select** + **Create HTML table**, grouped by `Retailer` |
-| Action 4 | Office 365 Outlook **Send an email (V2)** to the analytics distribution list |
+| Action 4 | Office 365 Outlook **Send an email (V2)**, To `sps-hub-alerts@swimusa.com` |
 
 The filter in Action 1 works only because `WeekEnding` is an **indexed** column (section 2.3). On a library past 5,000 items an unindexed filter is refused outright, and this flow would start failing roughly six months after go-live, which is exactly when you have stopped watching it.
 
@@ -1199,7 +1219,7 @@ What the email must contain, in priority order:
 ### 10.1 Before you send a single test
 
 - Point the flow at a **test folder** first. Change `Compose Library Root` to `/Shared Documents/02 - Sales/05 - Published Reports/_Test`, run the whole plan, then change it back. That one Compose is the only thing that needs changing, which is why it exists.
-- Create the Teams channel for alerts and wire section 7.4 to it.
+- Confirm the flow's Teams connection account is a member of **SPS Report Hub** (section 3.5), then post one test message to the chat before wiring section 7.4. A membership problem surfaces here in one minute or in section 7.4 as a confusing empty picker.
 
 ### 10.2 Parser trace table
 
@@ -1299,16 +1319,16 @@ Defect 1 is worth raising separately and with more force, because it is the only
 
 | Signal | Where | Cadence | Audience |
 | --- | --- | --- | --- |
-| A run failed | Teams channel, from section 7.4 | Immediate | IT / flow owner |
-| A report arrived as a link | Teams channel | Immediate | Analytics team |
-| Something is unclassified | Weekly control report | Monday 07:00 ET | Analytics distribution list |
-| Volume variance by retailer | Weekly control report | Monday 07:00 ET | Analytics distribution list |
+| A run failed | **SPS Report Hub** chat, section 7.4 | Immediate | IT / flow owner |
+| A report arrived as a link | **SPS Report Hub** chat | Immediate | Analytics team |
+| Something is unclassified | Weekly control report, `sps-hub-alerts@swimusa.com` | Monday 07:00 ET | Analytics team |
+| Volume variance by retailer | Weekly control report, `sps-hub-alerts@swimusa.com` | Monday 07:00 ET | Analytics team |
 | Flow disabled by the platform | Power Automate email to the owner | Automatic | Flow owner |
 | Request budget approaching the cap | Power Platform admin center capacity report | Monthly | IT |
 
 Two platform behaviours to put on the runbook, because both are quiet:
 
-- **Power Automate disables a flow that fails continuously** and emails the owner. If the owner is a service account nobody reads, that email goes nowhere. Set the service account mailbox to forward to your IT distribution list. This is the single most common way an automation dies unnoticed.
+- **Power Automate disables a flow that fails continuously** and emails the owner. If the owner is a service account nobody reads, that email goes nowhere. Set the service account mailbox to forward to `sps-hub-alerts@swimusa.com`. This is the single most common way an automation dies unnoticed.
 - **Connection expiry.** The Office 365 Outlook connection needs periodic reauthentication. Inside a solution, connection references make this a one-place fix. Check connection health monthly.
 
 ### 13.2 Adding a new retailer, report type or brand
@@ -1363,14 +1383,8 @@ Everything above is buildable as written. These eight depend on things I do not 
 | 4 | **Week-ending day** | Saturday (assumed) / Sunday / other | **Confirm Saturday with merchandising.** The whole date scheme rests on it. NRF 4-5-4 weeks run Sunday to Saturday and every observed receipt is Sun/Mon/Tue, so Saturday is near-certain, but it is one expression to change and expensive to change later. |
 | 5 | **`FiscalWeek`** | 4-5-4 lookup rows now / leave blank and add later | **Add the rows.** ~53 a year, merchandising already maintains the calendar for the Bottoms Up plan, and "week 37 across all retailers" is exactly the question folders cannot answer. |
 | 6 | **Backfill parity** | Refactor into a child flow / export and import a copy | **Child flow**, if you can spare the extra half day. Two copies of a parser drift, and the spec is right to call that out. The copy is acceptable if you write the warning into both descriptions. |
-| 7 | **Alert destinations** | Need a Teams channel and a distribution list | Tell me the two names and I will fill them into sections 7.4 and 9. |
+| 7 | **Alert destinations** | *(resolved)* | **SPS Report Hub** chat and `sps-hub-alerts@swimusa.com`, wired into sections 7.4 and 9. One open action: add the flow's Teams connection account to the chat (section 3.5). |
 | 8 | **Non-sortable date rewriting** | Build it now / leave disabled | **Leave disabled.** Zero of 1,001 attachments carry a date. The expression is in section 6.9 for when a sender needs it. A date parser that fires once a quarter and is never tested is a liability, and the derived date is correct. |
-
-### One thing I could not do
-
-`sps-filing-flow-spec_1.md` and the standalone mailbox audit did not reach this session; only `sps-filing-flow-spec_2.md` arrived. Its section 1 is itself a full mailbox audit (1,001 messages read on 2026-09-14), so the audit content this build needs is present and I have worked from it throughout.
-
-If `_1` contains material that `_2` dropped, the two places it would most likely change this guide are the **retailer alias table** (section 4.5) and the **brand list** (section 4.6), since a superseded spec most often differs by having fewer or differently-spelled entries. Send it over and I will diff the two and update the mapping list rows. Nothing else in the build would move.
 
 ---
 
