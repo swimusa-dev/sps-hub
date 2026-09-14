@@ -88,7 +88,7 @@ Two deviations from the spec's tree, both deliberate:
 - **`_Cross-Retailer` sits under the year.** The spec contradicts itself here: section 2's tree draws `_Cross-Retailer/` as a sibling of the retailers under `2026/`, but its folder rules say `_Cross-Retailer/{YYYY}/...`, which puts the year second. Year-first is consistent with every other path, so use `{YYYY}/_Cross-Retailer/{Family}/{Brand}/`.
 - **`_Admin` is year-scoped.** The spec says not year-scoped. At roughly 40 admin messages a year that folder grows slowly but forever, and there is no reason for it to be the one folder in the library that behaves differently. Use `_Admin/{YYYY}/`.
 
-**One question the confirmed fiscal calendar raises: is `{YYYY}` the calendar year or the fiscal year?**
+**`{YYYY}` is the calendar year.** Decided. The confirmed fiscal calendar made this a real question, because the two no longer coincide.
 
 Now that the 4-5-4 rule is pinned down (section 2.3), the two no longer line up. FY2026 runs 2026-02-01 to 2027-01-30, so its last five weeks fall in calendar 2027:
 
@@ -100,19 +100,19 @@ Now that the 4-5-4 rule is pinned down (section 2.3), the two no longer line up.
 | 2027-01-23 | 2026-W51 | `2027/` | `2026/` |
 | 2027-01-30 | 2026-W52 | `2027/` | `2026/` |
 
-**Recommendation: keep the calendar year in the folder path**, and let `FiscalYear` and `FiscalWeek` answer the fiscal question as columns.
+The folder path carries the **calendar year**, and `FiscalYear` and `FiscalWeek` answer the fiscal question as columns instead.
 
 Three reasons. The filename already carries a calendar date, so folder and filename agree and a browsing user is never confronted with `2027-01-30_...xlsx` sitting in a folder called `2026`. It is unambiguous to everyone, including IT and anyone outside merchandising who has no reason to know when the fiscal year turns. And it is the same argument section 2.4 already makes: folders give a path to walk, views answer the cross-cutting questions, and "all of FY2026" is a cross-cutting question.
 
-The honest counter-argument: merchandising thinks in fiscal years, these are fiscal-period reports, and a fiscal year holds exactly 52 or 53 weeks by construction rather than by coincidence. If merchandising is the primary audience for the folder tree rather than for the views, fiscal-year folders are the better fit.
+The counter-argument, recorded because it is a fair one: merchandising thinks in fiscal years, these are fiscal-period reports, and a fiscal year holds exactly 52 or 53 weeks by construction rather than by coincidence. The `By Fiscal Week` view in section 2.4 is what serves that audience.
 
-It is a one-expression change either way. To switch, move `Filter array Fiscal Week` (section 6.9) above `Compose Folder Path` and replace `Compose Filing Year` with:
+If you ever revisit this, it is a one-expression change: move `Filter array Fiscal Week` (section 6.9) above `Compose Folder Path` and replace `Compose Filing Year` with:
 
 ```
 first(split(coalesce(first(body('Filter_array_Fiscal_Week'))?['OutputCode'], concat(formatDateTime(outputs('Compose_Week_Ending'), 'yyyy'), '-W00')), '-'))
 ```
 
-Decide this **before the backfill**, not after. Changing it later means moving files between year folders and rewriting every link anyone has saved.
+Revisit it **only before the backfill**. Once history is filed, changing it means moving files between year folders and rewriting every link anyone has saved.
 
 ### 1.2 Filename date: use the week-ending Saturday, not the received date
 
@@ -1185,15 +1185,46 @@ Leave `Get file metadata using path Existing File` on the **default** retry poli
 
 The spec's instruction here is the right one and worth restating: **build the backfill as a manually triggered flow that shares the parse logic, not as a one-off script.** Two implementations of the same parser will drift, and the day they drift is the day the library stops being trustworthy.
 
-### 8.1 Structure
+### 8.1 Structure: the one question that decides it
 
-Best structure given Power Automate's constraints:
+The spec warns that two implementations of the same parser will drift, and it is right. But drift needs two *live* copies. So the decision reduces to a single operational question:
 
-1. **`SPS Analytics - Parse and File (child)`**: the parse and file logic from sections 6.3 to 6.10, converted to a **manually triggered child flow** taking Subject, From, DateTimeReceived, InternetMessageId, MessageId and the attachments array as inputs.
-2. **`SPS Analytics - File Reports to SharePoint`**: the production flow. Trigger, then call the child.
+> **After go-live, will anything other than the email trigger need to run the parser on an ongoing basis?**
+
+**If no: export a copy, run the backfill, delete the copy.** There is then no second implementation to drift, because it stops existing. When you need another backfill months later, export a fresh copy from the then-current production flow. That is zero-drift by construction, and it costs nothing to build.
+
+**If yes: build it as a parent and child flow** from day one, per 8.1.2 below.
+
+### 8.1.1 Why "no" is the likely answer here, and how to check
+
+The scenario that would justify keeping a permanent second copy is re-filing: a report lands in `_Unclassified`, someone adds the missing mapping row, and now the original message needs re-processing. That sounds like a recurring backfill. It is not, because of two properties this design already has:
+
+- **The mapping list is read at run time.** Adding a retailer changes behaviour with no flow edit at all, so the flow definition is byte-identical before and after the fix.
+- **Power Automate keeps 28 days of run history**, and a run can be resubmitted from it. Resubmitting replays the original trigger payload through the current flow, which now reads the corrected mapping list.
+
+So the remediation loop is: add the mapping row, open run history, resubmit. No backfill flow involved. The weekly control report (section 9) surfaces `_Unclassified` every Monday, which keeps stragglers comfortably inside the 28-day window.
+
+Two limits worth knowing before you rely on it. Resubmission is capped at **20 runs at a time**, and the default 28-day retention is an environment setting that an administrator can lower. Confirm nobody has reduced it below 28 days.
+
+The case that genuinely needs a backfill is re-parsing mail **older than 28 days**: a parser bug found late, or a retailer added retroactively. That is real but rare, and an export made at that moment is exactly as correct as a permanent child flow would have been. Note also that re-parsing old mail only *adds* the file in the right place; it does not remove the wrongly-filed copy, so a late fix needs manual cleanup either way.
+
+### 8.1.2 What the child flow actually costs
+
+If the answer is yes, this is the structure:
+
+1. **`SPS Analytics - Parse and File (child)`**: the logic from 6.3 to 6.10, with a **Manually trigger a flow** trigger taking Subject, From, DateTimeReceived, InternetMessageId, MessageId and the attachments array as inputs.
+2. **`SPS Analytics - File Reports to SharePoint`**: the production flow. Trigger, then **Run a Child Flow**.
 3. **`SPS Analytics - Backfill`**: manual trigger, reads the mailbox with pagination, calls the same child.
 
-One parser, three callers. If you would rather not refactor into a child flow, the fallback is to **export the production flow and import it as `SPS Analytics - Backfill`**, swapping only the trigger. That preserves logic parity at build time but not afterwards, so write "any parser change must be applied to both flows" at the top of both descriptions.
+Three constraints that are easy to discover too late:
+
+- **You cannot refactor into this later without risk.** Microsoft's documented known issue: create the parent and all child flows **directly in the same solution**, because importing a flow into a solution "might get unexpected results". So this is a day-one commitment, not a later cleanup.
+- **Child flows only support embedded connections.** Anything beyond built-in actions and Dataverse, which here means both Office 365 Outlook and SharePoint, must be switched to **Use this connection** rather than **Provided by run-only user**, on the child flow's Run only users tile. Connections cannot be passed from parent to child. In practice that hard-binds the child to `svc-sps-filing@swimusa.com`, which is the intended identity anyway.
+- **Run history splits in two.** A parse failure shows as a generic failure on the parent plus a separate child run to go and find. That is real friction for anyone who is not already comfortable in Power Automate, and it works against the "make failures legible" goal the rest of this design aims at.
+
+**Recommendation: exported copy, deleted after go-live.** This revises the earlier draft of this guide, which suggested the child flow. Three things changed the balance: the mapping list being read at run time means retailer changes need no flow edit, resubmit covers the 28-day remediation window for free, and the child-flow path turns out to be a day-one architectural commitment rather than a refactor you can defer.
+
+Whichever you choose, if a second copy does live alongside production, write **"any parser change must be applied to both flows"** at the top of both flow descriptions.
 
 ### 8.2 The backfill reader
 
@@ -1433,13 +1464,13 @@ This is the procedure for someone on your team, and it requires no Power Automat
 | 5 | `FiscalWeek` | Build it. Calendar generated to `docs/sps-fiscal-calendar-454.csv`, FY2025 to FY2028 | 2.3, 6.9 |
 | 7 | Alert destinations | SPS Report Hub chat and `sps-hub-alerts@swimusa.com`; service account already in the chat | 3.5, 7.4, 9 |
 | 8 | Non-sortable date rewriting | Leave disabled. Zero of 1,001 attachments carry a date | 6.9 |
+| 9 | Year in the folder path | **Calendar year**, with `FiscalYear` and `FiscalWeek` as columns | 1.1, 2.3, 2.4 |
 
 ### 14.2 Still open
 
 | # | Decision | Options | My recommendation |
 | --- | --- | --- | --- |
-| 6 | **Backfill parity** | Refactor into a child flow / export and import a copy | **Child flow**, if you can spare the extra half day. Two copies of a parser drift, and the spec is right to call that out. The copy is acceptable if you write the warning into both descriptions. |
-| 9 | **Calendar year or fiscal year in the folder path** | `{YYYY}` = calendar year / fiscal year | **Calendar year**, with `FiscalYear` and `FiscalWeek` as columns. Raised by the confirmed 4-5-4 rule: five weeks of each fiscal year fall in the next calendar year. Full argument and the switch expression are in section 1.1. **Decide before the backfill**, because changing it later means moving files and breaking saved links. |
+| 6 | **Backfill parity** | The question to answer: **after go-live, will anything other than the email trigger need to run the parser on an ongoing basis?** | **Probably no, so export a copy and delete it after go-live.** Adding a retailer needs no flow edit, and resubmit covers re-filing for 28 days, so the remediation loop never touches a backfill flow. Answer yes only if you want an on-demand re-file button or a Power Apps front end; then it is parent and child from day one, because it cannot be refactored in safely later. Full reasoning in section 8.1. |
 
 ### 14.3 Verify before go-live
 
