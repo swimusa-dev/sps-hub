@@ -1,0 +1,74 @@
+Title,MapType,MatchMode,MatchToken2,Priority,OutputCode,FolderName,DefaultBrand,DefaultBrandFolder,Cadence,QlikOnly,Active
+analytics@spscommerce.com,Sender,Token,,100,REPORT,,,,,No,Yes
+POSServices@spscommerce.com,Sender,Token,,100,ADMIN,,,,,No,Yes
+no-reply@spscommerce.com,Sender,Token,,100,ADMIN,,,,,No,Yes
+retailintelligence@spscommerce.com,Sender,Token,,100,ADMIN,,,,,No,Yes
+ALL RETAILERS,Retailer,Token,,900,CROSS-RETAILER,_Cross-Retailer,,,,No,Yes
+TOP 6 ACCTS,Retailer,Token,,900,CROSS-RETAILER,_Cross-Retailer,,,,No,Yes
+BLOOMINGDALES,Retailer,Token,,13,BLOOMINGDALES,Bloomingdales,,,,No,Yes
+JCPINTERNET,Retailer,Token,,11,JCPINTERNET,JCP Internet,,,,No,Yes
+NORDSTROM,Retailer,Token,,9,NORDSTROM,Nordstrom,,,,No,Yes
+JCPENNEY,Retailer,Token,,8,JCPENNEY,JCPenney,,,,No,Yes
+VON MAUR,Retailer,Token,,8,VON-MAUR,Von Maur,,,,No,Yes
+DILLARDS,Retailer,Token,,8,DILLARDS,Dillards,,,,No,Yes
+ACADEMY,Retailer,Token,,7,ACADEMY,Academy,,,,No,Yes
+NEIMANS,Retailer,Token,,7,NEIMANS,Neimans,,,,No,Yes
+BEALLS,Retailer,Token,,6,BEALLS,Bealls,,,,No,Yes
+MACYS,Retailer,Token,,5,MACYS,Macys,,,,No,Yes
+MAYCS,Retailer,Token,,5,MACYS,Macys,,,,No,Yes
+KOHLS,Retailer,Token,,5,KOHLS,Kohls,,,,No,Yes
+BELK,Retailer,Token,,4,BELK,Belk,,,,No,Yes
+SAKS,Retailer,Token,,4,SAKS,Saks,,,,No,Yes
+JCP,Retailer,Token,,3,JCPENNEY,JCPenney,,,,No,Yes
+EBW,Retailer,Token,,3,EBW,EBW,,,,No,Yes
+HBC,Retailer,Token,,3,EBW,EBW,,,,No,Yes
+QLIK SELL THRU,ReportFamily,Token,,180,QLIK-SELL-THRU,06 Qlik Sell Thru,ALL-BRANDS,All Brands,Weekly,No,Yes
+SPS RETURNS REPORT,ReportFamily,Token,,170,RETURNS,07 Returns,ALL-BRANDS,All Brands,Weekly,No,Yes
+ALL DIVISIONS,ReportFamily,Token,,160,ROLLUP,08 Division Rollups,ALL-DIVISIONS,All Divisions,Weekly,No,Yes
+ALL BRANDS TOTAL,ReportFamily,Token,,160,ROLLUP,08 Division Rollups,ALL-BRANDS,All Brands,Weekly,No,Yes
+TOP 6 ACCTS,ReportFamily,Token,,160,ROLLUP,08 Division Rollups,ALL-BRANDS,All Brands,Weekly,No,Yes
+BY DOOR & STYLE PERFORMANCE,ReportFamily,Token,,150,DOOR-AND-STYLE,05 Door and Style,,,Weekly,No,Yes
+DOOR PERFORMANCE,ReportFamily,Token,,140,DOOR-PERFORMANCE,04 Door Performance,,,Weekly,No,Yes
+STYLE SELLING,ReportFamily,Token,,130,STYLE-SELLING,01 Style Selling,,,Weekly,No,Yes
+WEEKLY TREND ANALYSIS,ReportFamily,Token,,120,WEEKLY-TREND,02 Weekly Trend,,,Weekly,No,Yes
+WTD,ReportFamily,Token,STD,110,PERIOD-TO-DATE,03 Period To-Date,,,Weekly,No,Yes
+SHAPE SOLVER SPORT,Brand,Token,,18,SHAPE-SOLVER-SPORT,Shape Solver Sport,,,,No,Yes
+ALL BRANDS TOTAL,Brand,Token,,16,ALL-BRANDS,All Brands,,,,No,Yes
+AMERICAN BEACH,Brand,Token,,14,AMERICAN-BEACH,American Beach,,,,No,Yes
+MIMI SIGNATURE,Brand,Token,,14,MIMI-SIGNATURE,Mimi Signature,,,,No,Yes
+SWIM SOLUTIONS,Brand,Token,,14,SWIM-SOLUTIONS,Swim Solutions,,,,No,Yes
+CONTROL BRANDS,Brand,Token,,14,CONTROL-BRANDS,Control Brands,,,,No,Yes
+ORAGEOUS KIDS,Brand,Token,,13,ORAGEOUS-KIDS,Orageous Kids,,,,No,Yes
+GREAT LENGTHS,Brand,Token,,13,GREAT-LENGTHS,Great Lengths,,,,No,Yes
+ALL DIVISIONS,Brand,Token,,13,ALL-DIVISIONS,All Divisions,,,,No,Yes
+ORAGEOUS JRS,Brand,Token,,12,ORAGEOUS-JRS,Orageous Jrs,,,,No,Yes
+SHAPE SOLVER,Brand,Token,,12,SHAPE-SOLVER,Shape Solver,,,,No,Yes
+STEVE MADDEN,Brand,Token,,12,STEVE-MADDEN,Steve Madden,,,,No,Yes
+LAUREN MISSY,Brand,Token,,12,LAUREN-MISSY,Lauren Missy,,,,No,Yes
+LAUREN WOMAN,Brand,Token,,12,LAUREN-WOMAN,Lauren Woman,,,,No,Yes
+SALT & COVE,Brand,Token,,11,SALT-AND-COVE,Salt and Cove,,,,No,Yes
+BAL HARBOUR,Brand,Token,,11,BAL-HARBOUR,Bal Harbour,,,,No,Yes
+MIRACLESUIT,Brand,Token,,11,MIRACLESUIT,Miraclesuit,,,,No,Yes
+ALL BRANDS,Brand,Token,,10,ALL-BRANDS,All Brands,,,,No,Yes
+ECO BEACH,Brand,Token,,9,ECO-BEACH,Eco Beach,,,,No,Yes
+VITAMIN A,Brand,Token,,9,VITAMIN-A,Vitamin A,,,,No,Yes
+LONGITUDE,Brand,Token,,9,LONGITUDE,Longitude,,,,No,Yes
+FREELY,Brand,Token,,6,FREELY,Freely,,,,No,Yes
+LAUREN,Brand,Token,,6,LAUREN,Lauren,,,,No,Yes
+POLO,Brand,Token,,4,POLO,Polo,,,,No,Yes
+GLKO,Brand,Token,,4,GLKO,GLKO,,,,No,Yes
+JRS,Brand,Token,,3,JRS,Jrs,,,,No,Yes
+S3,Brand,Token,,2,S3,S3,,,,No,Yes
+TS,Brand,Token,,2,TS,TS,,,,No,Yes
+LB PB,Brand,Token,,5,LB-PB,LB PB,,,,Yes,Yes
+RL,Brand,Token,,2,RL,RL,,,,Yes,Yes
+MG,Brand,Token,,2,MG,MG,,,,Yes,Yes
+MS,Brand,Token,,2,MS,MS,,,,Yes,Yes
+VA,Brand,Token,,2,VA,VA,,,,Yes,Yes
+SS,Brand,Token,,2,SS,SS,,,,Yes,Yes
+BF,Brand,Token,,2,BF,BF,,,,Yes,Yes
+PB,Brand,Token,,2,PB,PB,,,,Yes,Yes
+4 5 4 CALENDAR,Calendar,Token,,200,454,,,,,No,Yes
+SUPPLIER FISCAL CALENDAR,Calendar,Token,,200,SUPPLIER,,,,,No,Yes
+SUPPLIER,Calendar,EndsWith,,100,SUPPLIER,,,,,No,Yes
+NRF,Calendar,EndsWith,,100,NRF,,,,,No,Yes

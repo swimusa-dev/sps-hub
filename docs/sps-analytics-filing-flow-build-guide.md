@@ -4,7 +4,15 @@ Power Automate cloud flow that files every report emailed to `sps-analytics@swim
 
 **Destination:** `https://mainstreamswimsuits.sharepoint.com/sites/CompanyHub/Shared Documents/02 - Sales/05 - Published Reports`
 
-**Status:** design complete, ready to build. Every expression below is paste-ready Power Automate workflow definition language (WDL).
+> **Runtime superseded, design current.** The job now runs as an **Azure Function App** owned by IT, not as a Power Automate flow. See [`azure-function-build-guide.md`](azure-function-build-guide.md) for identity setup, deployment and operations.
+>
+> **Every design decision in this document still stands** and is implemented as written: the folder structure, filename grammar, week-ending anchor, resend rule, mapping list, routing and metadata columns are all unchanged. The parsing rules in sections 4 and 5, and the reasoning behind them in sections 1, 11 and 12, remain the reference.
+>
+> What to skip when reading for the Function implementation: the WDL expressions in section 6, the Power Automate prerequisites in section 3, and the backfill mechanics in section 8, all of which have code equivalents in `src/sps_filing/`. The one piece still built in Power Automate is the **weekly control report** in section 9.
+>
+> Two things the code does better than the flow could: the fiscal calendar in section 2.3 is computed from the NRF rule in `dates.py` rather than imported as 209 rows, and the nine-subject trace table in section 10.2 is an executable test suite in `tests/test_trace_table.py`.
+
+**Status:** design complete and implemented. The expressions below are paste-ready Power Automate workflow definition language (WDL), retained as the reference specification of the parsing rules.
 
 ---
 
@@ -29,7 +37,7 @@ So this guide is built against a single, confirmed source of truth.
 | # | Assumption | Why | If wrong |
 | --- | --- | --- | --- |
 | A1 | *(resolved)* `_1` and `_2` are the same file | Confirmed 2026-09-14 | No longer an assumption |
-| A2 | Reports cover a retail week ending **Saturday** | Every observed receipt lands Sun/Mon/Tue; NRF 4-5-4 weeks run Sun to Sat | Change one expression (section 6.3) |
+| A2 | *(confirmed)* Retail week ends **Saturday** | NRF 4-5-4 weeks run Sunday to Saturday | No longer an assumption |
 | A3 | Mailbox timezone reference is `America/New_York` | Stated in spec section 3 | Change the `convertTimeZone` argument |
 | A4 | The destination is a folder inside the existing **Documents** library, not a new library | That is what the URL you gave resolves to | See section 2.1 for the trade-off |
 | A5 | Exactly one report attachment per message, but the flow must tolerate N | Spec: "Exactly 1 in every message sampled" | Already handled, no change |
@@ -87,6 +95,32 @@ Two deviations from the spec's tree, both deliberate:
 
 - **`_Cross-Retailer` sits under the year.** The spec contradicts itself here: section 2's tree draws `_Cross-Retailer/` as a sibling of the retailers under `2026/`, but its folder rules say `_Cross-Retailer/{YYYY}/...`, which puts the year second. Year-first is consistent with every other path, so use `{YYYY}/_Cross-Retailer/{Family}/{Brand}/`.
 - **`_Admin` is year-scoped.** The spec says not year-scoped. At roughly 40 admin messages a year that folder grows slowly but forever, and there is no reason for it to be the one folder in the library that behaves differently. Use `_Admin/{YYYY}/`.
+
+**`{YYYY}` is the calendar year.** Decided. The confirmed fiscal calendar made this a real question, because the two no longer coincide.
+
+Now that the 4-5-4 rule is pinned down (section 2.3), the two no longer line up. FY2026 runs 2026-02-01 to 2027-01-30, so its last five weeks fall in calendar 2027:
+
+| Week ending | Fiscal week | Calendar-year folder | Fiscal-year folder |
+| --- | --- | --- | --- |
+| 2027-01-02 | 2026-W48 | `2027/` | `2026/` |
+| 2027-01-09 | 2026-W49 | `2027/` | `2026/` |
+| 2027-01-16 | 2026-W50 | `2027/` | `2026/` |
+| 2027-01-23 | 2026-W51 | `2027/` | `2026/` |
+| 2027-01-30 | 2026-W52 | `2027/` | `2026/` |
+
+The folder path carries the **calendar year**, and `FiscalYear` and `FiscalWeek` answer the fiscal question as columns instead.
+
+Three reasons. The filename already carries a calendar date, so folder and filename agree and a browsing user is never confronted with `2027-01-30_...xlsx` sitting in a folder called `2026`. It is unambiguous to everyone, including IT and anyone outside merchandising who has no reason to know when the fiscal year turns. And it is the same argument section 2.4 already makes: folders give a path to walk, views answer the cross-cutting questions, and "all of FY2026" is a cross-cutting question.
+
+The counter-argument, recorded because it is a fair one: merchandising thinks in fiscal years, these are fiscal-period reports, and a fiscal year holds exactly 52 or 53 weeks by construction rather than by coincidence. The `By Fiscal Week` view in section 2.4 is what serves that audience.
+
+If you ever revisit this, it is a one-expression change: move `Filter array Fiscal Week` (section 6.9) above `Compose Folder Path` and replace `Compose Filing Year` with:
+
+```
+first(split(coalesce(first(body('Filter_array_Fiscal_Week'))?['OutputCode'], concat(formatDateTime(outputs('Compose_Week_Ending'), 'yyyy'), '-W00')), '-'))
+```
+
+Revisit it **only before the backfill**. Once history is filed, changing it means moving files between year folders and rewriting every link anyone has saved.
 
 ### 1.2 Filename date: use the week-ending Saturday, not the received date
 
@@ -223,11 +257,21 @@ To swap the destination later, change the single Compose action `Compose Library
 
 **The trade-off you are accepting (assumption A4).** The spec recommends a dedicated **SPS Analytics Reports** library rather than a folder inside Documents, so that retention and permissions scope cleanly. Your URL points at a folder inside the existing Documents library. Filing into an existing library is perfectly workable, and these are the three consequences:
 
-1. **Retention and permissions are inherited** from Documents. If Documents has a retention policy tuned for general business documents, ~10,000 SPS reports a year inherit it. Check that this is what you want.
-2. **The 5,000-item list view threshold applies to the whole library**, not to your folder. At ~10,400 files a year you cross it inside twelve months, and anything else already living in Documents counts too. Nested folders keep per-folder views fine, but any *flat* view or filter across the library needs indexed columns. Section 2.3 handles this.
+1. **Retention and permissions are inherited** from Documents, which is confirmed to retain **3 years of history**. That is compatible with this design: reports age out on a rolling three-year window, which is what you want for a weekly reporting feed. No conflict, so the library choice stands.
+2. **The 5,000-item list view threshold applies to the whole library**, not to your folder. Nested folders keep per-folder views fine, but any *flat* view or filter across the library needs indexed columns, and the three-year window makes this a certainty rather than a risk. See the volume table below.
 3. Versioning settings are library-wide, so turning on the 500-version limit affects all of Documents.
 
-**My recommendation:** go with your path as given. The reporting library is more discoverable where the sales team already works, and the two real risks (retention inheritance, view threshold) are both manageable and both addressed below. Revisit only if Documents turns out to carry a retention policy that conflicts.
+**What three-year retention means in numbers.** At ~10,400 files a year, the report tree reaches a steady state of roughly **31,200 files**, plus whatever else already lives in Documents. The backfill (section 8.2) contributes 1,001 of those on day one.
+
+| Milestone | Item count | Reached at roughly | Consequence |
+| --- | --- | --- | --- |
+| List view threshold | 5,000 | **month 5** | Unindexed flat views and OData filters start failing |
+| Index-creation lockout | 20,000 | **month 22** | **An index can no longer be added by hand** |
+| Steady state | ~31,200 | year 3 | Holds flat from here |
+
+The second row is the one with a deadline attached, and section 2.3 acts on it.
+
+**My recommendation:** go with your path as given. The reporting library is more discoverable where the sales team already works, retention is now confirmed compatible, and the view threshold is handled by indexing on day one.
 
 ### 2.2 Create the root folders and turn on versioning
 
@@ -268,14 +312,28 @@ Create these on the Documents library (**Settings > Create column**), or on a de
 | `SourceAttachmentName` | Single line | No | original attachment name | **New** |
 | `ParseConflict` | Yes/No | No | subject vs attachment disagreed | **New** |
 
-**Indexing is not optional.** Once the library passes 5,000 items, any view or OData filter on a non-indexed column is refused outright by SharePoint. Add the indexes now, while the library is small: the modern experience only auto-indexes below 20,000 items, and adding an index by hand is blocked above 20,000. Doing this on day one costs five minutes; doing it in month fourteen is a support ticket.
+**Indexing is not optional, and it has a deadline.** Once the library passes 5,000 items, any view or OData filter on a non-indexed column is refused outright by SharePoint. Worse, **adding an index by hand is blocked above 20,000 items**, and the modern experience only auto-indexes below that figure.
 
-**On `FiscalWeek`.** Retail 4-5-4 week numbering needs a fiscal-year start date (the Sunday following the Saturday nearest 31 January), which is not derivable from a timestamp with a one-line expression. Two options:
+With three-year retention this library passes 5,000 items around **month 5** and reaches **20,000 in roughly 22 months**, both sooner once existing Documents content is counted. After 20,000 the indexes in the table above cannot be created through the UI at all, and the weekly control report in section 9 (which filters on `WeekEnding`) stops working with no way to fix it short of a support path or restructuring the library.
 
-- **(Recommended)** Add ~53 rows a year to the mapping list with `MapType = FiscalWeek`, keyed on the week-ending date, giving `FiscalYear` and `FiscalWeek`. Merchandising already maintains this calendar for the Bottoms Up plan, so it is a copy-paste, not a derivation. The flow looks it up from the array it has already loaded, at zero extra cost.
-- **(Defer)** Leave `FiscalWeek` empty for now. `WeekEnding` is a proper date column and sorts, filters and groups correctly on its own. Add fiscal week later when someone actually asks for it.
+**Create all five indexes before the first backfill chunk runs.** It costs five minutes on an empty library and cannot be undone cheaply later. This is the single highest-consequence five minutes in the whole build.
 
-Either is defensible. I would do the calendar rows, because "show me week 37 across all retailers" is exactly the question the metadata exists to answer, and it is the question folders cannot.
+**On `FiscalWeek`.** Confirmed rule, and it is now built rather than deferred:
+
+> NRF 4-5-4 weeks run **Sunday through Saturday**. The fiscal year ends on the **Saturday closest to 31 January**, and week 1 starts the following Sunday. A 53rd week falls out every five or six years.
+
+That rule is fully deterministic, so the calendar is generated rather than transcribed. **`docs/sps-fiscal-calendar-454.csv` in this repository holds 209 ready-to-import rows covering FY2025 through FY2028**, in the exact column shape of the mapping list. Import it into `SPS Filing Map` and the lookup in section 6.9 works with no further effort.
+
+| Fiscal year | Starts | Ends | Weeks |
+| --- | --- | --- | --- |
+| FY2025 | 2025-02-02 | 2026-01-31 | 52 |
+| FY2026 | 2026-02-01 | 2027-01-30 | 52 |
+| FY2027 | 2027-01-31 | 2028-01-29 | 52 |
+| FY2028 | 2028-01-30 | 2029-02-03 | **53** |
+
+The generated calendar reproduces the every-five-or-six-years pattern exactly: 53-week years land on FY2023, FY2028 and FY2034. Regenerate the CSV before FY2029 using the same rule.
+
+> **Watch this, because it looks like a bug and is not.** The spec's example `FiscalWeek` value of `2026-W37` was an **ISO** week. Under 4-5-4 the same receipt is **`2026-W32`**, five weeks earlier, because the fiscal year starts in February rather than January. Week ending 2026-09-12 is fiscal week 32, not 37. Anyone comparing the flow's output against the spec will see the gap and assume the flow is wrong; it is the spec's example that predates the 4-5-4 decision.
 
 ### 2.4 Build the business-facing views
 
@@ -286,6 +344,7 @@ Folders give the team a path to walk. Views answer the questions a path cannot. 
 | **By Week** | `WeekEnding` desc | Retailer | "What landed for week ending 9/12?" |
 | **By Brand** | `Brand` | `WeekEnding` desc | "Every Lauren report, all retailers" |
 | **By Retailer** | `Retailer` | `WeekEnding` desc | "Everything Dillards sent" |
+| **By Fiscal Week** | `FiscalWeek` desc | Retailer | "Everything for fiscal week 2026-W32" |
 | **Needs Attention** | none | `ReceivedDate` desc | Filter: `ParseConflict = Yes` |
 
 Every one of these filters or sorts on an indexed column. That is not a coincidence, it is why section 2.3 indexes what it indexes.
@@ -337,13 +396,11 @@ Every action execution counts, built-in Data Operations included, not just conne
 
 That sits inside 6,000, with roughly a 2x margin. Comfortable but not generous: a backfill run, a catch-up delivery after an SPS outage, or any second flow owned by the same account eats the margin fast. And note that background flows bill to the **owner**, regardless of whose connection the actions use, so the owner account's other automations count against the same 6,000.
 
-**Recommendation:** create a dedicated service account, `svc-sps-filing@swimusa.com`, own the flow from it, and assign it a **Power Automate Premium** licence.
+**Confirmed owner: `svc-sps-filing@swimusa.com`.** Build and own the flow from this account, not from a named user. It stops the flow breaking when a person leaves, which is a well-known way to lose an automation quietly, and it isolates this budget from anyone's other flows.
 
-- It moves you to 40,000/day, roughly 13x headroom.
-- It stops the flow from breaking when a person leaves the company. A flow owned by a departing employee is a well-known way to lose an automation quietly.
-- It isolates the budget from that person's other flows.
+**One item to verify before go-live: that the account actually holds a Power Automate Premium licence.** Owning the flow from a service account with only seeded Microsoft 365 rights still caps it at 6,000 requests per 24 hours, and the peak-day estimate above is ~3,000. That works until it does not: a backfill run, a catch-up delivery after an SPS outage, or a second flow added to the same account each eat the margin. Premium moves it to 40,000, roughly 13x headroom.
 
-If you would rather not buy the licence today, this is a legitimate deferral: build it under a named owner, and watch the Power Platform admin center capacity report (Licensing > Capacity add-ons > Download reports > "Microsoft Power Platform requests") for the first two months. Move to Premium when peak days pass ~4,000. Note that Microsoft applies higher "transition period" limits today and has said official limits apply later, so budgeting to the documented 6,000 rather than to observed behaviour is the safe read.
+If the licence is not in place on day one, that is a legitimate deferral rather than a blocker. Watch the Power Platform admin center capacity report (Licensing > Capacity add-ons > Download reports > "Microsoft Power Platform requests") for the first two months and move to Premium when peak days pass ~4,000. Note that Microsoft applies higher "transition period" limits today and has said official limits apply later, so budget to the documented 6,000 rather than to observed behaviour.
 
 Standard connectors only (Office 365 Outlook, SharePoint, Teams), so nothing here requires premium *connector* rights. The licence is purely about request volume.
 
@@ -374,7 +431,7 @@ Both are confirmed. Everything downstream in this guide points at these two.
 | **SPS Report Hub** (Teams group chat) | `19:7506e9ab0358413c9932c88c52d6cece@thread.v2` | Immediate alerts: run failures, link-only reports |
 | **sps-hub-alerts@swimusa.com** | Mail-enabled group | Weekly control report, platform notices |
 
-**One prerequisite that follows from choosing a chat rather than a channel:** the account holding the flow's **Teams connection must be a member of the SPS Report Hub chat**. The connector can only see and post to chats its signed-in account participates in. If you follow the section 3.2 recommendation and run this under `svc-sps-filing@swimusa.com`, **add that service account to the chat** before building section 7.4, or the action will fail at design time with the chat simply absent from the picker.
+**Prerequisite, already satisfied:** the account holding the flow's Teams connection must be a member of the SPS Report Hub chat, because the connector can only see and post to chats its signed-in account participates in. `svc-sps-filing@swimusa.com` **has been added to the chat**, so section 7.4 will build cleanly. If the chat is ever absent from the picker, membership is the first thing to re-check.
 
 Two operational notes on the chat, so nobody is surprised later:
 
@@ -1134,42 +1191,119 @@ Leave `Get file metadata using path Existing File` on the **default** retry poli
 
 ## 8. Step 7: Backfill and test harness
 
-The spec's instruction here is the right one and worth restating: **build the backfill as a manually triggered flow that shares the parse logic, not as a one-off script.** Two implementations of the same parser will drift, and the day they drift is the day the library stops being trustworthy.
+The backfill is the parser's acceptance test as much as it is a data-loading job. The spec is right that it should share the production parse logic rather than be a separate script, because two implementations drift and the day they drift is the day the library stops being trustworthy.
 
-### 8.1 Structure
+### 8.1 Structure: decided
 
-Best structure given Power Automate's constraints:
+Drift needs two *live* copies, so the structural decision reduced to one operational question:
 
-1. **`SPS Analytics - Parse and File (child)`**: the parse and file logic from sections 6.3 to 6.10, converted to a **manually triggered child flow** taking Subject, From, DateTimeReceived, InternetMessageId, MessageId and the attachments array as inputs.
-2. **`SPS Analytics - File Reports to SharePoint`**: the production flow. Trigger, then call the child.
+> **After go-live, will anything other than the email trigger need to run the parser on an ongoing basis?**
+
+**Answered: no.**
+
+**So: export a copy of the production flow, swap the trigger, run the backfill, delete the copy.** There is then no second implementation to drift, because it stops existing. If another backfill is ever needed, export a fresh copy from the then-current production flow. That is zero-drift by construction and costs nothing to build. Section 8.1.2 records the child-flow alternative in case the answer ever changes.
+
+### 8.1.1 What covers re-filing instead
+
+The scenario that would otherwise justify keeping a permanent second copy is re-filing: a report lands in `_Unclassified`, someone adds the missing mapping row, and now the original message needs re-processing. That sounds like a recurring backfill. It is not, because of two properties this design already has:
+
+- **The mapping list is read at run time.** Adding a retailer changes behaviour with no flow edit at all, so the flow definition is byte-identical before and after the fix.
+- **Power Automate keeps 28 days of run history**, and a run can be resubmitted from it. Resubmitting replays the original trigger payload through the current flow, which now reads the corrected mapping list.
+
+So the remediation loop is: add the mapping row, open run history, resubmit. No backfill flow involved. The weekly control report (section 9) surfaces `_Unclassified` every Monday, which keeps stragglers comfortably inside the 28-day window.
+
+Two limits worth knowing before you rely on it. Resubmission is capped at **20 runs at a time**, and the default 28-day retention is an environment setting that an administrator can lower. Confirm nobody has reduced it below 28 days.
+
+The case that genuinely needs a backfill is re-parsing mail **older than 28 days**: a parser bug found late, or a retailer added retroactively. That is real but rare, and an export made at that moment is exactly as correct as a permanent child flow would have been. Note also that re-parsing old mail only *adds* the file in the right place; it does not remove the wrongly-filed copy, so a late fix needs manual cleanup either way.
+
+### 8.1.2 The child flow, recorded in case the answer ever changes
+
+If something else ever does need to call the parser on an ongoing basis, an on-demand re-file button or a Power Apps front end, this is the structure:
+
+1. **`SPS Analytics - Parse and File (child)`**: the logic from 6.3 to 6.10, with a **Manually trigger a flow** trigger taking Subject, From, DateTimeReceived, InternetMessageId, MessageId and the attachments array as inputs.
+2. **`SPS Analytics - File Reports to SharePoint`**: the production flow. Trigger, then **Run a Child Flow**.
 3. **`SPS Analytics - Backfill`**: manual trigger, reads the mailbox with pagination, calls the same child.
 
-One parser, three callers. If you would rather not refactor into a child flow, the fallback is to **export the production flow and import it as `SPS Analytics - Backfill`**, swapping only the trigger. That preserves logic parity at build time but not afterwards, so write "any parser change must be applied to both flows" at the top of both descriptions.
+Three constraints that are easy to discover too late:
 
-### 8.2 The backfill reader
+- **You cannot refactor into this later without risk.** Microsoft's documented known issue: create the parent and all child flows **directly in the same solution**, because importing a flow into a solution "might get unexpected results". So this is a day-one commitment, not a later cleanup.
+- **Child flows only support embedded connections.** Anything beyond built-in actions and Dataverse, which here means both Office 365 Outlook and SharePoint, must be switched to **Use this connection** rather than **Provided by run-only user**, on the child flow's Run only users tile. Connections cannot be passed from parent to child. In practice that hard-binds the child to `svc-sps-filing@swimusa.com`, which is the intended identity anyway.
+- **Run history splits in two.** A parse failure shows as a generic failure on the parent plus a separate child run to go and find. That is real friction for anyone who is not already comfortable in Power Automate, and it works against the "make failures legible" goal the rest of this design aims at.
+
+An earlier draft of this guide recommended the child flow. Three things changed the balance: the mapping list being read at run time means retailer changes need no flow edit, resubmit covers the 28-day remediation window for free, and the child-flow path turns out to be a day-one architectural commitment rather than a refactor that can be deferred. Because it cannot be retrofitted safely, revisiting this means rebuilding both flows in a fresh solution.
+
+If a second copy ever does live alongside production, write **"any parser change must be applied to both flows"** at the top of both flow descriptions.
+
+### 8.2 The backfill window
+
+**Confirmed: the mailbox was created on 2026-08-11**, so the window is `2026-08-11` through today and there is nothing older to find.
+
+| | |
+| --- | --- |
+| Window | 2026-08-11 to 2026-09-14, **35 days, 5.0 weeks** |
+| Fiscal weeks | **FY2026 W28 to W32** |
+| Messages | **1,001**, the full Inbox |
+| Rate | ~200 messages/week |
+
+**The library's history therefore begins at FY2026 week 28.** This is a permanent property of the archive, not a gap to be closed later, and it is worth recording somewhere a business user will find it. Put a short `_README.txt` in `/02 - Sales/05 - Published Reports/` saying so, or someone will eventually spend an afternoon hunting for February.
+
+Going back to FY2026 week 1 would mean asking SPS to re-send W01 to W27. That has been considered and declined; note it here only so the decision is on the record rather than rediscovered.
+
+### 8.3 The backfill reader
 
 **`Get emails Backfill`** (Office 365 Outlook > **Get emails (V3)**)
 
 | Field | Value |
 | --- | --- |
 | Original Mailbox Address | `sps-analytics@swimusa.com` |
-| Folder | `Inbox` |
+| Folder | `Inbox` (repeat per folder if 8.2 finds mail elsewhere) |
 | Include Attachments | **Yes** |
 | Top | `1000` (the maximum) |
-| Search Query | `received:2026-08-11..2026-09-14` |
+| Search Query | `received:2026-08-11..2026-08-31` (chunk 1 of 2; see below) |
 
 Settings: **Pagination On**, Threshold `5000`.
 
-Two documented gotchas that will cost you a morning each if you hit them blind:
+**Two chunks, oldest first: August then September.** This is not optional tidiness. `Top` caps at **1,000** and the Inbox holds **1,001** messages, so a single pass silently drops one. Splitting at the month boundary puts roughly 600 in the first chunk and 400 in the second, both comfortably inside the cap.
 
-- **The To / From / Subject Filter fields only examine the first 250 messages** in the folder. At 1,001 messages those filters give you a silently incomplete result. Use **Search Query** instead, which searches the whole folder.
-- `Top` is capped at **1,000**. The audit counts exactly 1,001 messages. Page the backfill by date range (a week at a time) rather than trying to take the whole mailbox in one call, and you sidestep the cap and the request burst at the same time.
+Three documented gotchas, each of which will cost you a morning if you hit it blind:
 
-Process oldest first, and put a **Delay** of 2 seconds inside the loop. A backfill of 1,001 messages at ~30 actions each is ~30,000 Power Platform requests, which will exhaust a 6,000/day seeded budget five times over. Either run it under the Premium licence from section 3.2, or split it across five days by date range. **Decide this before you start the backfill, not halfway through it.**
+- **The To / From / Subject Filter fields only examine the first 250 messages** in the folder, so they return silently incomplete results at this volume. Use **Search Query**, which searches the whole folder.
+- **`Top` is capped at 1,000**, which is why the window is chunked rather than paged in one pass.
+- **Run history is 28 days.** If you want a record of what the backfill did, capture the run outputs as you go rather than relying on history being there next month.
 
-### 8.3 Expected outcome, and the pass/fail line
+Process oldest first, and put a **Delay** of 2 seconds inside the loop.
 
-Run the backfill against the 1,001 existing messages **before enabling the production trigger**. Expected:
+**Budget the request cost before you start:**
+
+| | |
+| --- | --- |
+| 1,001 messages at ~30 actions each | **~30,000 Power Platform requests** |
+| Days of full budget on M365 seeded (6,000/day) | **5 days** |
+| Days of full budget on Power Automate Premium (40,000/day) | **under 1 day** |
+
+This is the clearest practical argument for the Premium licence in section 3.2: with it the backfill is an afternoon, without it the same work has to be rationed across a working week. Either way, remember the production trigger draws on the same owner's budget at the same time.
+
+### 8.4 Sequence: mind the gap between backfill and trigger
+
+The trigger does not retroactively collect mail that arrived while it was off. It starts from the moment you enable it. So "backfill, then enable" opens a gap exactly as wide as the backfill takes, and mail arriving in that gap is filed by neither.
+
+At 1,001 messages the backfill is an afternoon on a Premium licence, so the gap is hours rather than days, and SPS delivers in Sunday-to-Tuesday bursts. Run it on a Thursday and the gap may well contain nothing at all. It is still free to avoid.
+
+**Recommended order:**
+
+1. Validate the parser against `_Test` (section 10).
+2. Point `Compose Library Root` at the production path.
+3. **Enable the production trigger.** From this moment nothing new is missed.
+4. Run the backfill, August chunk then September.
+5. Reconcile counts (8.5) and run the folder check (8.6).
+
+The overlap between the September chunk and live traffic is safe by design: the `SourceMessageId` guard skips anything already filed, and the week-anchored filename means a message caught by both resolves to the same target. That guard is doing real work here, not just catching replays.
+
+**If you would rather see the backfill verified before anything goes live**, that is a legitimate preference at this size. Run the backfill first, then immediately before enabling the trigger, run one more small chunk covering the hours the backfill itself took. Just do not skip that last chunk, because it is the whole gap.
+
+### 8.5 Expected outcome, and the pass/fail line
+
+The audit read all 1,001 messages, so this is a known quantity rather than an estimate:
 
 | Destination | Expected count |
 | --- | --- |
@@ -1177,15 +1311,17 @@ Run the backfill against the 1,001 existing messages **before enabling the produ
 | `_Admin/2026/` | **4** (two SPS account notices, one Retail Intelligence newsletter, one Retailer Data Availability Report) |
 | `_Unclassified/` | Only the `3. SALES - DOOR PERFORMANCE` instances |
 
-**The pass/fail line, stated plainly: if more than a handful land in `_Unclassified`, do not enable the trigger. Fix the mapping list and re-run.** The backfill is the parser's test harness, and its whole value is that it tells you this before the flow is live.
+**The pass/fail line: run the August chunk, then stop and look.** If more than a handful of it landed in `_Unclassified`, fix the mapping list before running September. Checking between the two chunks turns a bad parse into a twenty-minute problem.
 
-### 8.4 The check the backfill gives you for free
+These three numbers are the parser's acceptance test. The audit covered exactly this mail, so any material deviation from 997 / 4 / a handful means the flow is not doing what the spec's own analysis says it should, and that is worth understanding before the library is trusted.
+
+### 8.6 The check the backfill gives you for free
 
 After the backfill, run this against the library. It is the direct proof of the 53-file requirement:
 
-> Group the **By Week** view by folder, and sort descending by item count. **No leaf folder should hold more than 5 files** after a five-week backfill.
+> Group the **By Week** view by folder, and sort descending by item count. **No leaf folder should hold more than 5 files.**
 
-Five weeks of history, one file per week, means five files. Any folder holding six or more means two messages in one reporting week resolved to different filenames, which means either a resend the week-anchor did not collapse, or a parse producing two different brands for the same series. Both are worth chasing down before go-live, and both are invisible until you look at it this way.
+The window is five reporting weeks (W28 to W32) and the design allows one file per folder per week, so five is the ceiling. Any folder holding six or more means two messages in one reporting week resolved to different filenames, which is either a resend the week-anchor failed to collapse or a parse producing two different brands for the same series. Both are worth chasing before the library is trusted, and both are invisible unless you look at it this way.
 
 ---
 
@@ -1261,13 +1397,18 @@ T10 is worth running even though it looks obscure: it is the bounded-matching ca
 
 ### 10.4 Go-live sequence
 
+Note that the trigger goes on **before** the backfill, not after. Section 8.4 explains why: a multi-day backfill would otherwise leave a gap of live mail that neither the trigger nor the backfill collects.
+
 1. Parser trace table (10.2) verified on paper.
 2. Behaviour tests T1 to T13 pass against `_Test`.
-3. `Compose Library Root` switched to the production path.
-4. Backfill run, counts reconciled against section 8.3.
-5. Leaf-folder count check from section 8.4 passes.
-6. Trigger enabled.
-7. First Monday control report reviewed by a human before anyone relies on the library.
+3. All five indexed columns created (section 2.3). Before any file is written.
+4. `Compose Library Root` switched to the production path.
+5. **Trigger enabled.** Nothing new is missed from this point.
+6. Backfill August chunk run, then **stop and inspect** against section 8.5.
+7. September chunk run.
+8. Counts reconciled against 997 / 4 / a handful (8.5), leaf-folder check passed (8.6).
+9. `_README.txt` added to the report root noting that history begins 2026-08-11 (section 8.2).
+10. First Monday control report reviewed by a human before anyone relies on the library.
 
 ---
 
@@ -1371,20 +1512,38 @@ This is the procedure for someone on your team, and it requires no Power Automat
 
 ---
 
-## 14. Decisions that need you
+## 14. Decisions
 
-Everything above is buildable as written. These eight depend on things I do not know about your tenant or your business, with a recommendation on each.
+### 14.1 Confirmed
 
-| # | Decision | Options | My recommendation |
+| # | Decision | Answer | Built into |
 | --- | --- | --- | --- |
-| 1 | **Flow owner and licence** | Named user on M365 (6,000 requests/day) / service account with Power Automate Premium (40,000) | **Service account + Premium.** Section 3.2 shows peak days near 3,000, so M365 works until it does not. The stronger argument is ownership: a flow owned by a person dies when they leave. |
-| 2 | **Library** | Your folder in `Documents` / a dedicated SPS Analytics Reports library | **Keep your path.** More discoverable where sales already works. Check item 3 first. |
-| 3 | **Retention on `Documents`** | Unknown to me | **Check before go-live.** ~10,000 reports a year will inherit whatever policy Documents carries. If it has a short deletion policy, reconsider item 2. |
-| 4 | **Week-ending day** | Saturday (assumed) / Sunday / other | **Confirm Saturday with merchandising.** The whole date scheme rests on it. NRF 4-5-4 weeks run Sunday to Saturday and every observed receipt is Sun/Mon/Tue, so Saturday is near-certain, but it is one expression to change and expensive to change later. |
-| 5 | **`FiscalWeek`** | 4-5-4 lookup rows now / leave blank and add later | **Add the rows.** ~53 a year, merchandising already maintains the calendar for the Bottoms Up plan, and "week 37 across all retailers" is exactly the question folders cannot answer. |
-| 6 | **Backfill parity** | Refactor into a child flow / export and import a copy | **Child flow**, if you can spare the extra half day. Two copies of a parser drift, and the spec is right to call that out. The copy is acceptable if you write the warning into both descriptions. |
-| 7 | **Alert destinations** | *(resolved)* | **SPS Report Hub** chat and `sps-hub-alerts@swimusa.com`, wired into sections 7.4 and 9. One open action: add the flow's Teams connection account to the chat (section 3.5). |
-| 8 | **Non-sortable date rewriting** | Build it now / leave disabled | **Leave disabled.** Zero of 1,001 attachments carry a date. The expression is in section 6.9 for when a sender needs it. A date parser that fires once a quarter and is never tested is a liability, and the derived date is correct. |
+| 1 | Flow owner | `svc-sps-filing@swimusa.com` | 3.2, 3.5 |
+| 2 | Library | Folder inside `Documents`, as given | 2.1 |
+| 3 | Retention | **3 years**, always retained | 2.1, 2.3 |
+| 4 | Week-ending day | **Saturday.** NRF 4-5-4 weeks run Sunday to Saturday; the fiscal year ends on the Saturday closest to 31 January | 1.2, 6.3 |
+| 5 | `FiscalWeek` | Build it. Calendar generated to `docs/sps-fiscal-calendar-454.csv`, FY2025 to FY2028 | 2.3, 6.9 |
+| 6 | Backfill parity | Nothing but the trigger runs the parser ongoing, so: **export a copy, run it, delete it** | 8.1 |
+| 7 | Alert destinations | SPS Report Hub chat and `sps-hub-alerts@swimusa.com`; service account already in the chat | 3.5, 7.4, 9 |
+| 8 | Non-sortable date rewriting | Leave disabled. Zero of 1,001 attachments carry a date | 6.9 |
+| 9 | Year in the folder path | **Calendar year**, with `FiscalYear` and `FiscalWeek` as columns | 1.1, 2.3, 2.4 |
+| 10 | Backfill window | **2026-08-11 to today**, the whole Inbox. 5 weeks, 1,001 messages, FY2026 W28 to W32 | 8.2 to 8.6 |
+| 11 | Pre-August history | Mailbox was created 2026-08-11, so none exists. Library history begins at **FY2026 W28**; SPS re-send considered and declined | 8.2 |
+
+### 14.2 Still open
+
+**Nothing.** Every design decision is settled. What remains is the verification list below and the build itself.
+
+### 14.3 Verify before go-live
+
+These are not decisions, they are checks that something confirmed is actually in place.
+
+| Check | Why it matters |
+| --- | --- |
+| `svc-sps-filing@swimusa.com` holds a **Power Automate Premium** licence | Without it the account is capped at 6,000 requests per 24 hours against a ~3,000 peak-day estimate. Section 3.2. |
+| Full Access on `sps-analytics@swimusa.com` granted to that account, **at least two hours before** you build the trigger | Permission replication lag. Section 3.1. |
+| All five indexed columns created **before the first backfill chunk** | Indexes cannot be added by hand above 20,000 items, which this library reaches at roughly month 22. Section 2.3. |
+| Nobody has lowered the environment's 28-day run history retention | The re-filing loop in 8.1.1 depends on resubmit being available for 28 days. |
 
 ---
 
@@ -1433,3 +1592,11 @@ Two syntax notes that cause most paste errors:
 | Trigger concurrency guidance | [Optimize Power Automate triggers](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/optimize-power-automate-triggers) |
 | List view threshold and indexing | [Manage large lists and libraries in SharePoint](https://learn.microsoft.com/en-us/troubleshoot/sharepoint/lists-and-libraries/items-exceeds-list-view-threshold) |
 | Shared mailbox configuration | [Configure shared mailbox settings](https://learn.microsoft.com/en-us/microsoft-365/admin/email/configure-a-shared-mailbox) |
+| Teams group chat from a flow | [Send a message in Teams using Power Automate](https://learn.microsoft.com/en-us/power-automate/teams/send-a-message-in-teams) |
+
+## Appendix C: Files in this repository
+
+| File | Purpose |
+| --- | --- |
+| `docs/sps-analytics-filing-flow-build-guide.md` | This guide |
+| `docs/sps-fiscal-calendar-454.csv` | 209 NRF 4-5-4 fiscal week rows, FY2025 to FY2028, in `SPS Filing Map` column shape. Import directly; see section 2.3. |

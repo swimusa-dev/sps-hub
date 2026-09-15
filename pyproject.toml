@@ -1,0 +1,25 @@
+[project]
+name = "sps-filing"
+version = "0.1.0"
+description = "Parser and filer for SPS Commerce analytics reports into SharePoint"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+function = [
+    "azure-functions>=1.21.0",
+    "azure-identity>=1.19.0",
+    "httpx>=0.27.0",
+]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
