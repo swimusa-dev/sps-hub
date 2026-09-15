@@ -38,6 +38,16 @@ jobs:
         # import error in the Graph client or the triggers would reach a deploy.
         run: python -c "import sps_filing.config, sps_filing.graph, sps_filing.filer, function_app"
 
+      - name: Deployment package resolves the way Azure builds it
+        # The step above installs the project, so it cannot catch a
+        # requirements.txt that omits the local package. Azure's remote build
+        # runs `pip install -r requirements.txt` and nothing else, which is
+        # what this reproduces: a clean environment, then import the triggers.
+        run: |
+          python -m venv /tmp/azure-like
+          /tmp/azure-like/bin/pip install -q -r requirements.txt
+          /tmp/azure-like/bin/python -c "import function_app"
+
       - name: Mapping seed matches its generator
         # data/sps_filing_map_seed.csv is both the SharePoint import file and
         # the test fixture. Hand-editing it would silently drift the two apart,

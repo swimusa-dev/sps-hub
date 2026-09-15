@@ -200,10 +200,12 @@ python tools/generate_mapping_seed.py
 ## 6. Deployment
 
 ```bash
-func azure functionapp publish func-sps-filing --python
+func azure functionapp publish func-sps-filing --build remote
 ```
 
 Or wire up GitHub Actions from this repo with `Azure/functions-action@v1` and an OIDC federated credential, which avoids storing a publish profile as a secret.
+
+> **`requirements.txt` ends with a bare `.` and that line is load-bearing.** The app's own package lives under `src/`, which nothing puts on the path at runtime. Locally pytest supplies `pythonpath = ["src"]` and CI runs `pip install -e .`, but Azure's remote build runs `pip install -r requirements.txt` and nothing else. Drop that line and the deploy reports success, then every invocation fails with `ModuleNotFoundError: sps_filing` because `function_app.py` cannot import the parser. CI reproduces the Azure build in a clean venv specifically to catch this.
 
 ---
 
