@@ -11,6 +11,8 @@ Power Automate cloud flow that files every report emailed to `sps-analytics@swim
 > What to skip when reading for the Function implementation: the WDL expressions in section 6, the Power Automate prerequisites in section 3, and the backfill mechanics in section 8, all of which have code equivalents in `src/sps_filing/`. The one piece still built in Power Automate is the **weekly control report** in section 9.
 >
 > Two things the code does better than the flow could: the fiscal calendar in section 2.3 is computed from the NRF rule in `dates.py` rather than imported as 209 rows, and the nine-subject trace table in section 10.2 is an executable test suite in `tests/test_trace_table.py`.
+>
+> For why the runtime moved, and what else was considered and rejected, see [`architecture-decisions.md`](architecture-decisions.md).
 
 **Status:** design complete and implemented. The expressions below are paste-ready Power Automate workflow definition language (WDL), retained as the reference specification of the parsing rules.
 
@@ -913,27 +915,24 @@ Everything below is inside this loop.
 toLower(last(split(items('Apply_to_each_Report_Attachment')?['Name'], '.')))
 ```
 
-**`Compose Has Sortable Date`** (does the attachment name already start with `YYYY-MM-DD`?)
+**`Compose Date Stamp`**
 ```
-and(greater(length(items('Apply_to_each_Report_Attachment')?['Name']), 10), equals(substring(items('Apply_to_each_Report_Attachment')?['Name'], 4, 1), '-'), equals(substring(items('Apply_to_each_Report_Attachment')?['Name'], 7, 1), '-'), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 0, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 1, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 2, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 3, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 5, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 6, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 8, 1)), -1), greater(indexOf('0123456789', substring(items('Apply_to_each_Report_Attachment')?['Name'], 9, 1)), -1))
-```
-
-**`Compose Date Stamp`** (the three-branch rule you asked for)
-```
-if(equals(outputs('Compose_Has_Sortable_Date'), true), substring(items('Apply_to_each_Report_Attachment')?['Name'], 0, 10), if(equals(coalesce(outputs('Compose_Family_Row')?['Cadence/Value'], 'Weekly'), 'Monthly'), formatDateTime(outputs('Compose_Week_Ending'), 'yyyy-MM'), outputs('Compose_Week_Ending')))
+if(equals(coalesce(outputs('Compose_Family_Row')?['Cadence/Value'], 'Weekly'), 'Monthly'), formatDateTime(outputs('Compose_Week_Ending'), 'yyyy-MM'), outputs('Compose_Week_Ending'))
 ```
 
-| Your rule | Branch | Status in the live feed |
-| --- | --- | --- |
-| Already sortable, preserve it | `Compose Has Sortable Date` = true | **Never fires today.** Zero of 1,001 attachments carry any date. Kept so a future sender works without a flow change. |
-| Non-sortable, rewrite it | *(optional, below)* | Never fires today. **Recommend leaving disabled.** |
-| No date, derive one | fallback | **This is the live path for 100% of current traffic.** |
+**The three-branch date rule, and why only one branch is built.**
 
-**Optional non-sortable rewrite.** If a sender ever starts naming files `9-10-2026_...`, add two Composes before `Compose Date Stamp` and insert the middle branch. `Compose US Date Text` holds the candidate substring, and the conversion is:
-```
-formatDateTime(parseDateTime(outputs('Compose_US_Date_Text'), 'en-US'), 'yyyy-MM-dd')
-```
-Always pass the `'en-US'` locale. Without it, parsing follows the flow's regional settings and `03/04/2026` silently becomes 3 April instead of 4 March. Leave this branch disabled (set `Compose Has US Date` to the literal `false`) until a real sender needs it: a half-tested date parser that fires once a quarter is worse than no date parser, because the derived date is correct and the folder ceiling depends on it.
+| Rule | Status against this feed |
+| --- | --- |
+| Already sortable, preserve it | **Never fires.** Zero of the 1,001 audited attachments carry any date. |
+| Non-sortable, rewrite it | **Never fires.** Same reason. |
+| No date, derive one | **The live path for 100% of traffic.** |
+
+An earlier draft of this guide carried a twelve-clause WDL expression to detect a leading `YYYY-MM-DD` in the attachment name, plus a second pair of actions for the US-format rewrite. Both have been removed. They were dead on arrival against this feed, and an unreadable expression that has never once been exercised is a liability rather than future-proofing: it invites someone to "fix" it, and nothing would catch them getting it wrong.
+
+The rule is still implemented, just where it can be tested. `date_stamp()` in `src/sps_filing/plan.py` takes a `prefer_attachment_date` flag, defaulted off, with the detection in one readable regex. Turning it on is a one-line change, and a test goes with it.
+
+One trap worth keeping on the record if it is ever rebuilt in Power Automate: always pass the `'en-US'` locale to `parseDateTime`. Without it, parsing follows the flow's regional settings and `03/04/2026` silently becomes 3 April rather than 4 March.
 
 **`Compose File Name`**
 ```
@@ -1598,5 +1597,6 @@ Two syntax notes that cause most paste errors:
 
 | File | Purpose |
 | --- | --- |
+| `docs/architecture-decisions.md` | Why the system is shaped this way, and what was rejected |
 | `docs/sps-analytics-filing-flow-build-guide.md` | This guide |
 | `docs/sps-fiscal-calendar-454.csv` | 209 NRF 4-5-4 fiscal week rows, FY2025 to FY2028, in `SPS Filing Map` column shape. Import directly; see section 2.3. |

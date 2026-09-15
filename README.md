@@ -31,5 +31,6 @@ import check over the Azure-facing modules, and a check that
 
 ## Docs
 
+- [Architecture decisions](docs/architecture-decisions.md): why the system is shaped this way, and what was considered and rejected. Start here if you are wondering why something is the way it is.
 - [Design guide](docs/sps-analytics-filing-flow-build-guide.md): folder structure, filename grammar, the parsing rules and why each exists, the data-quality defects in the SPS feed that the parser tolerates.
 - [Azure Function build and deployment guide](docs/azure-function-build-guide.md): identity setup, app settings, go-live sequence, operations.
