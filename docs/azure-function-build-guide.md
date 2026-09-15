@@ -6,7 +6,7 @@ The filing job runs as an Azure Function App owned by IT. This guide covers the 
 
 ## 1. What changed, and what did not
 
-Only the runtime changed. Every design decision carries over intact:
+Only the runtime changed. Every design decision carries over intact, and the reasoning behind each one, including the options rejected along the way, is recorded in [`architecture-decisions.md`](architecture-decisions.md).
 
 | Decision | Status |
 | --- | --- |
