@@ -1,3 +1,10 @@
 azure-functions>=1.21.0
 azure-identity>=1.19.0
 httpx>=0.27.0
+
+# The app's own package. It lives under src/, which nothing puts on the path
+# at runtime: pytest uses `pythonpath = ["src"]` and CI uses `pip install -e .`,
+# but Azure's remote build runs `pip install -r requirements.txt` and nothing
+# else. Without this line the deploy succeeds and then the app fails to load,
+# because `from sps_filing import ...` in function_app.py resolves to nothing.
+.
