@@ -15,9 +15,17 @@ from .parse import MAILBOX_TZ, local_received, parse_message
 #: Extensions SPS actually sends. Anything else is treated as not a report.
 REPORT_EXTENSIONS = frozenset({"xlsx", "xls", "csv", "txt", "pdf", "zip"})
 
-#: Below this, an attachment is a signature graphic or a tracking pixel rather
-#: than a report. Comfortably under the smallest real workbook.
-MIN_REPORT_BYTES = 15_000
+#: Below this, an attachment is a placeholder or a truncated file rather than a
+#: report. Signature graphics and tracking pixels are already excluded by
+#: REPORT_EXTENSIONS (they are .png/.jpg/.gif) and by is_inline, so this floor
+#: only has to catch an empty or truncated file carrying a report extension.
+#:
+#: This was 15,000, on the stated assumption that it sat "comfortably under the
+#: smallest real workbook". Measured against live mail that was wrong, and it
+#: cost 22% of the feed: 29 of 133 messages over one weekend were real reports
+#: diverted to _Unclassified/_Links. A small brand's style-selling workbook is
+#: 9,894 bytes and a small Qlik sell-thru export is 2,740 bytes.
+MIN_REPORT_BYTES = 1_024
 
 #: A leading YYYY-MM-DD in the attachment name. Inert against the current feed:
 #: zero of the 1,001 audited attachments carry a date. Kept so a future sender

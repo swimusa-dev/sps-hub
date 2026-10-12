@@ -103,6 +103,28 @@ def test_inline_images_and_signature_graphics_are_skipped(table):
     assert plans == []
 
 
+def test_small_but_real_reports_are_filed(table):
+    """Sizes measured off live mail, not invented.
+
+    A 15,000 byte floor sent 29 of 133 messages over one weekend to
+    _Unclassified/_Links. Both sizes below are real attachments from
+    sps-analytics@swimusa.com: a small brand files a small report.
+    """
+    cases = [
+        # 1. SALES - SWIM SOLUTIONS - MACYS STYLE SELLING To-Date Analysis.xlsx
+        (STYLE_SELLING, "report.xlsx", 9_894),
+        # DILLARDS Qlik Sell Thru Sales Report.txt, for the LB PB brand
+        ("DILLARDS Qlik Sell Thru Sales Report LB PB",
+         "DILLARDS Qlik Sell Thru Sales Report.txt", 2_740),
+    ]
+    for subject, name, size in cases:
+        message = make_message(subject, _dt.date(2026, 9, 14),
+                               attachment=name, size=size)
+        result, plans = plan_filing(message, table, LIBRARY_ROOT)
+        assert result.disposition is Disposition.REPORT
+        assert plans, f"{size} byte attachment on {subject!r} was dropped"
+
+
 def test_extension_comes_from_the_attachment(table):
     """Never hardcoded per family: it describes the bytes actually sent."""
     for name, expected in [("x.txt", ".txt"), ("x.csv", ".csv"), ("x.XLSX", ".xlsx")]:
