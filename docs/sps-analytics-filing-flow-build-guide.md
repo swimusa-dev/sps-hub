@@ -892,13 +892,15 @@ The **If no** branch is `_Unclassified` routing; see section 7.2.
 | Condition | *(expression below)*, `is equal to` `true` |
 
 ```
-and(equals(item()?['IsInline'], false), greater(item()?['Size'], 15000), greater(indexOf('|XLSX|XLS|CSV|TXT|PDF|ZIP|', concat('|', toUpper(last(split(item()?['Name'], '.'))), '|')), -1))
+and(equals(item()?['IsInline'], false), greater(item()?['Size'], 1024), greater(indexOf('|XLSX|XLS|CSV|TXT|PDF|ZIP|', concat('|', toUpper(last(split(item()?['Name'], '.'))), '|')), -1))
 ```
 
 Three filters, each doing a specific job:
 
 - **`IsInline = false`** drops embedded images in the message body. This is the property that exists precisely for this.
-- **`Size > 15000`** drops signature logos and tracking pixels that are attached rather than inlined, which `IsInline` will not catch. 15 KB is comfortably below the smallest real report and above essentially every signature graphic. Tune it after the backfill if you see a real file near the line.
+- **`Size > 1024`** drops empty and truncated files. It does not need to catch signature graphics: those are `.png`/`.jpg`/`.gif` and the extension allowlist on the same line already excludes them, while `IsInline` handles anything embedded in the body.
+
+  > **This was 15000, and it was wrong.** The claim that 15 KB sits "comfortably below the smallest real report" did not survive contact with live mail. A dry run over one weekend diverted **29 of 133 messages**, 22% of the feed, into `_Unclassified/_Links`: a small brand's style-selling workbook is 9,894 bytes and a small Qlik sell-thru export is 2,740 bytes. Both are real reports. The floor is now 1024, which still rejects the 900-byte placeholder pinned in `tests/test_behaviour.py`.
 - **The pipe-delimited extension allowlist** is a bounded match, the same trick as section 5.3: `|XLSX|` cannot match inside another word.
 
 **`Condition Has Report Attachment`**: `length(body('Filter_array_Report_Attachments'))` `is greater than` `0`. The **If no** branch is section 6.10.
