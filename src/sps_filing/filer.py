@@ -129,6 +129,19 @@ def process_message(
             # A different message resolving to the same name is a resend or a
             # correction. Overwriting creates a version; the folder count,
             # and so the 53-per-year ceiling, is untouched.
+            #
+            # Log it. A resend overwriting itself is routine, but two
+            # genuinely different reports colliding on one name looks
+            # identical from here and loses one of them. Without this line
+            # the only evidence is a count in the run summary, which says
+            # how many but never which.
+            log.warning(
+                "replaced %s: stored message %s, now %s, subject %r",
+                plan.full_path,
+                fields.get("SourceMessageId"),
+                message.internet_message_id,
+                message.subject,
+            )
             summary.replaced += 1
 
 
